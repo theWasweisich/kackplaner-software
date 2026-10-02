@@ -1,0 +1,10 @@
+{
+    "compilerOptions": {
+        "target": "es2025",
+        "module": "esnext",
+        "strict": true,
+        "skipLibCheck": true,
+        "sourceMap": true
+
+    }
+}
