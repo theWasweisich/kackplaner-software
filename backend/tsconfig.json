@@ -1,7 +1,13 @@
 {
-    "files": [],
-    "references": [
-        { "path": "./src"},
-        { "path": "./src/client" }
-    ]
+  "compilerOptions": {
+    "module": "nodenext",
+    "rewriteRelativeImportExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.ts",
+    "src/main.ts"
+  ]
 }
