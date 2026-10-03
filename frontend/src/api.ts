@@ -6,7 +6,7 @@ export interface CalendarEvent {
   display: "background" | undefined;
 }
 
-const baseUrl: string = "http://192.168.178.100:8090";
+const baseUrl: string = "http://localhost:8090";
 
 export async function fetchEvents(startStr: string, endStr: string): Promise<CalendarEvent[]> {
   try {
