@@ -2,9 +2,12 @@ import express, { type Request, type Response } from 'express';
 import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
 import cors from 'cors';
-import path from 'path';
+import dotenv from 'dotenv';
 
-const PORT = 8090;
+dotenv.config();
+
+const BACKEND_PORT = process.env.BACKEND_PORT || 8090;
+// const FRONTEND_PORT = process.env.FRONTEND_PORT || 2222;
 const DB_PATH = "database.db";
 sqlite3.verbose();
 const db = await open({
@@ -12,6 +15,8 @@ const db = await open({
     driver: sqlite3.Database
 });
 const app = express();
+
+app.use(cors());
 
 db.run("CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, title TEXT, start TEXT, allDay INTEGER, display TEXT)");
 
@@ -26,9 +31,7 @@ interface CalendarEvent {
 interface KackeventPutBody {
     events: CalendarEvent[]
 }
-
 app.use(express.json());
-app.use(cors());
 
 app.put("/kackevent", async (req: Request, res: Response) => {
     const stmt = await db.prepare(
@@ -103,6 +106,6 @@ app.delete("/kackevent", async (req: Request, res: Response) => {
 })
 
 
-app.listen(PORT, () => {
-    console.log(`Listening on http://[::1]:${PORT}`);
+app.listen(BACKEND_PORT, () => {
+    console.log(`Listening on http://[::1]:${BACKEND_PORT}`);
 });
