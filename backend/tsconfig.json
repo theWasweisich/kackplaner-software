@@ -4,7 +4,7 @@
     "rewriteRelativeImportExtensions": true,
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
-    "noEmit": true,
+    "noEmit": false,
     "skipLibCheck": true
   },
   "include": ["src/**/*.ts",
