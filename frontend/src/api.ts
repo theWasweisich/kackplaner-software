@@ -4,25 +4,26 @@ export interface CalendarEvent {
   start: string;
   allDay: boolean;
   display: "background" | undefined;
+  microlax?: boolean;
 }
 
 const baseUrl: string = `http://localhost:${import.meta.env.VITE_BACKEND_PORT || 8090}`;
 
 export async function fetchEvents(startStr: string, endStr: string): Promise<CalendarEvent[]> {
+  let events: CalendarEvent[] = [];
   try {
     console.log(`[API] Fetching events from: /get?start=${startStr}&end=${endStr}`);
     const res = await fetch(baseUrl + `/kackevent?start=${startStr}&end=${endStr}`);
     if (!res.ok) {
       console.error(`Server error: ${res.status} (${res.statusText})`);
-      return [];
-
+      return events;
     }
     const data: { events: CalendarEvent[] } = await res.json();
-    return data.events;
+    events = data.events;
   } catch (error) {
     console.error("[API] Failed to fetch events", error);
-    return [];
   }
+  return events;
 }
 
 export async function createEvents(events: CalendarEvent[]): Promise<CalendarEvent[]> {

@@ -7,18 +7,32 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const BACKEND_PORT = process.env.BACKEND_PORT || 8090;
-// const FRONTEND_PORT = process.env.FRONTEND_PORT || 2222;
+const FRONTEND_PORT = process.env.FRONTEND_PORT || 2222;
 const DB_PATH = "database.db";
 sqlite3.verbose();
 const db = await open({
     filename: DB_PATH,
     driver: sqlite3.Database
 });
+
 const app = express();
 
-app.use(cors());
+app.use(cors({
+    // origin: `http://127.0.0.1:${FRONTEND_PORT}`
+}));
 
-db.run("CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, title TEXT, start TEXT, allDay INTEGER, display TEXT)");
+const createTableSQLString = `
+    CREATE TABLE IF NOT EXISTS events (
+        id INTEGER PRIMARY KEY,
+        title TEXT,
+        start TEXT,
+        allDay INTEGER,
+        display TEXT,
+        microlax INTEGER
+    );
+`
+
+db.run(createTableSQLString);
 
 interface CalendarEvent {
     id?: string;
@@ -26,6 +40,7 @@ interface CalendarEvent {
     start: string;
     allDay: boolean;
     display?: string;
+    microlax?: boolean;
 }
 
 interface KackeventPutBody {
@@ -35,13 +50,21 @@ app.use(express.json());
 
 app.put("/kackevent", async (req: Request, res: Response) => {
     const stmt = await db.prepare(
-        "INSERT INTO events (id, title, start, allDay, display) VALUES (?, ?, ?, ?, ?)"
+        "INSERT INTO events (id, title, start, allDay, display, microlax) VALUES (?, ?, ?, ?, ?, ?)"
     );
 
     const putBody = req.body as KackeventPutBody;
 
     for (const event of putBody.events) {
-        stmt.bind(event.id, event.title, event.start, event.allDay, event.display);
+        event.microlax = event.microlax ? event.microlax : false;
+        stmt.bind(
+            event.id,
+            event.title,
+            event.start,
+            event.allDay,
+            event.display,
+            event.microlax
+        );
         stmt.run();
     }
 
@@ -69,7 +92,20 @@ app.get("/kackevent", async (req: Request, res: Response) => {
     const dates = getStartEndFromQuery(req);
 
     const dbRes: CalendarEvent[] = await db.all(
-        "SELECT id, title, start, allDay, display FROM events WHERE unixepoch(?) < unixepoch(start) AND unixepoch(?) > unixepoch(start)",
+        `
+        SELECT
+             id,
+             title,
+             start,
+             allDay,
+             display,
+             microlax
+        FROM
+            events
+        WHERE
+            unixepoch(?) < unixepoch(start)
+          AND
+            unixepoch(?) > unixepoch(start)`,
         dates.start.toISOString(), dates.end.toISOString()
     );
 

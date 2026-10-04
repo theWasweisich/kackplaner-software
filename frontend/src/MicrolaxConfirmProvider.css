@@ -1,0 +1,27 @@
+.microlax-dialog {
+    padding: 1.25rem;
+    border: 1px solid #ccc;
+    border-radius: 0.5rem;
+    max-width: 25rem;
+    font-size: large;
+
+    & div {
+        display: flex;
+        justify-content: center;
+        gap: 0.5rem;
+        margin-top: 1.25rem;
+
+        & button {
+            flex-grow: 1;
+            aspect-ratio: 2;
+        }
+
+        & .confirm-button {
+            background-color: #6effbd;
+        }
+
+        & .cancel-button {
+            background-color: #c99999;
+        }
+    }
+}
