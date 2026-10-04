@@ -3,5 +3,21 @@
     font-size: large;
     padding: 1rem;
     aspect-ratio: 2;
-    background-color: #ff7b7b;
+}
+
+.control-buttons {
+    display: flex;
+    flex-direction: row;
+    font-size: large;
+    gap: 1rem;
+
+    & button {
+        margin: 0.75rem;
+        padding: 1rem;
+        aspect-ratio: 2;
+    }
+
+    & .shutdown-button {
+        background-color: #ff7b7b;
+    }
 }

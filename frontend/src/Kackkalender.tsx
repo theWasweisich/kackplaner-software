@@ -9,7 +9,7 @@ import formaThemePlugin from "@fullcalendar/react/themes/forma";
 import './Kackkalendar.css';
 
 const BATCH_DELAY_MS = 1000;
-const EVENT_COLOR = "brown";
+const EVENT_COLOR = "#8989e1";
 const EVENT_MICROLAX_COLOR = "#c54f4f";
 const EVENT_ICON = "💩";
 
@@ -52,7 +52,7 @@ function Kackkalender() {
     const handleDateClick = async (arg: DateClickInfo) => {
         const clickedDateStr = arg.dateStr;
 
-        const eventIndex = events.findIndex(event => {
+        const eventIndex: number = events.findIndex((event: CalendarEvent) => {
             const eventDate = new Date(event.start);
             const eventDateStr = `${eventDate.getFullYear()}-${String(eventDate.getMonth() + 1).padStart(2, '0')}-${String(eventDate.getDate()).padStart(2, '0')}`;
             return eventDateStr === clickedDateStr;
@@ -63,23 +63,27 @@ function Kackkalender() {
             return;
         }
 
-        let microlax = await confirm({
+        const microlax: boolean = await confirm({
             title: 'Microlaxabfrage',
             message: 'Wurde mit Microlax gehauft?',
             confirmText: 'Ja',
             cancelText: 'Nein'
         });
 
+        addEvent(arg.date, microlax);
+    }
+
+    const addEvent = (startDate: Date, microlax: boolean) => {
         const newEvent: CalendarEvent = {
-            display: "background",
             title: EVENT_ICON,
-            start: arg.dateStr,
+            start: startDate.toISOString(),
             allDay: true,
             microlax: microlax,
-            color: microlax ? EVENT_COLOR : EVENT_MICROLAX_COLOR
+            color: microlax ? EVENT_MICROLAX_COLOR : EVENT_COLOR,
+            display: "background"
         }
 
-        setEvents(previousEvents => [...previousEvents, newEvent]);
+        setEvents(prevState => [...prevState, newEvent]);
 
         pendingCreates.current.push(newEvent);
 
@@ -89,7 +93,7 @@ function Kackkalender() {
 
         createTimeout.current = window.setTimeout(async () => {
             await createPendingEvents();
-        }, BATCH_DELAY_MS);
+        }, BATCH_DELAY_MS)
     }
 
     const createPendingEvents = async () => {
@@ -138,7 +142,9 @@ function Kackkalender() {
                 backgroundEventColor={EVENT_COLOR}
                 firstDay={1}
             />
-            <button className="shutdown-button" onClick={triggerShutdown} >Shutdown</button>
+            <div className="control-buttons">
+                <button className="shutdown-button" onClick={triggerShutdown}>Shutdown</button>
+            </div>
         </div>
     )
 }
