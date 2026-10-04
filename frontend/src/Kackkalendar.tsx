@@ -24,8 +24,8 @@ function Kackkalendar() {
 
     const removeEventAtIndex = async (index: number) => {
         const newEvents = [...events];
-        const deltedEvent = newEvents.splice(index, 1)[0];
-        const success = await deleteEvent(deltedEvent);
+        const deletedEvent = newEvents.splice(index, 1)[0];
+        const success = await deleteEvent(deletedEvent);
         if (success) {
             setEvents(newEvents);
         }
@@ -41,7 +41,7 @@ function Kackkalendar() {
         });
 
         if (eventIndex !== -1) {
-            removeEventAtIndex(eventIndex);
+            await removeEventAtIndex(eventIndex);
             return;
         }
 
@@ -69,11 +69,15 @@ function Kackkalendar() {
         }
 
         createTimeout.current = window.setTimeout(async () => {
-            const eventsToSend = [...pendingCreates.current];
-            pendingCreates.current = [];
-
-            await createEvents(eventsToSend);
+            await createPendingEvents();
         }, 1000);
+    }
+
+    const createPendingEvents = async () => {
+        const eventsToSend = [...pendingCreates.current];
+        pendingCreates.current = [];
+
+        await createEvents(eventsToSend);
     }
 
     const triggerShutdown = async () => {
@@ -84,6 +88,12 @@ function Kackkalendar() {
             cancelText: "Nein, bitte nicht"
         }))) {
             return;
+        }
+
+        if (createTimeout.current !== null && pendingCreates.current.length > 0) {
+            console.log(`${pendingCreates.current.length} events need to be created before shutdown`);
+            createTimeout.current = null;
+            await createPendingEvents();
         }
 
         if (await shutdownKiosk()) {

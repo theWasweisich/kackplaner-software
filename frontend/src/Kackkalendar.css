@@ -1,4 +1,5 @@
 .shutdown-button {
+    margin: 0.75rem;
     font-size: large;
     padding: 1rem;
     aspect-ratio: 2;

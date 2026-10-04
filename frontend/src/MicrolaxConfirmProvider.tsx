@@ -1,5 +1,6 @@
 import {createContext, useContext, useState, useCallback, type ReactNode, useRef, useEffect} from 'react';
 import './MicrolaxConfirmProvider.css';
+import * as React from "react";
 
 interface ConfirmOptions {
     title?: string;

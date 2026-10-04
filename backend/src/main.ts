@@ -8,6 +8,7 @@ import { exec } from "child_process";
 dotenv.config();
 
 const BACKEND_PORT = process.env.BACKEND_PORT || 8090;
+// noinspection JSUnusedLocalSymbols
 const FRONTEND_PORT = process.env.FRONTEND_PORT || 2222;
 const DB_PATH = process.env.DB_PATH || "database.db";
 sqlite3.verbose();
@@ -33,7 +34,7 @@ const createTableSQLString = `
     );
 `
 
-db.run(createTableSQLString);
+db.run(createTableSQLString).catch(reason => console.error(`Error during creation of db schema: ${reason}`));
 
 interface CalendarEvent {
     id?: string;
@@ -58,7 +59,7 @@ app.put("/kackevent", async (req: Request, res: Response) => {
 
     for (const event of putBody.events) {
         event.microlax = event.microlax ? event.microlax : false;
-        stmt.bind(
+        await stmt.bind(
             event.id,
             event.title,
             event.start,
@@ -88,8 +89,6 @@ function getStartEndFromQuery(req: Request): { start: Date, end: Date } {
 }
 
 app.get("/kackevent", async (req: Request, res: Response) => {
-    const queryParams: { start: string, end: string } = req.query as { start: string, end: string };
-
     const dates = getStartEndFromQuery(req);
 
     const dbRes: CalendarEvent[] = await db.all(
@@ -147,7 +146,7 @@ app.post('/shutdown', (req: Request, res: Response) => {
     res.status(200).json({ message: "Shutting down..." });
 
     setTimeout(() => {
-        exec('sudo /sbin/shutdown -h now', (error, stdout, stderr) => {
+        exec('sudo /sbin/shutdown -h now', (error) => {
             if (error) {
                 console.error(`Shutdown failed: ${error.message}`);
             }
@@ -157,5 +156,6 @@ app.post('/shutdown', (req: Request, res: Response) => {
 
 
 app.listen(BACKEND_PORT, () => {
+    // noinspection HttpUrlsUsage
     console.log(`Listening on http://[::1]:${BACKEND_PORT}`);
 });
