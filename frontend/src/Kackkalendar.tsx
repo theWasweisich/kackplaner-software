@@ -1,11 +1,12 @@
 import {useRef, useState} from "react";
-import {type CalendarEvent, createEvents, deleteEvent, fetchEvents} from "./api.ts";
+import {type CalendarEvent, createEvents, deleteEvent, fetchEvents, shutdownKiosk} from "./api.ts";
 import {useConfirm} from "./MicrolaxConfirmProvider.tsx";
 import FullCalendar, {type DateClickInfo, type DatesSetInfo} from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/react/daygrid";
 import timeGridPlugin from "@fullcalendar/react/timegrid";
 import interactionPlugin from "@fullcalendar/react/interaction";
 import formaThemePlugin from "@fullcalendar/react/themes/forma";
+import './Kackkalendar.css';
 
 function Kackkalendar() {
     const [events, setEvents] = useState<CalendarEvent[]>([])
@@ -75,6 +76,21 @@ function Kackkalendar() {
         }, 1000);
     }
 
+    const triggerShutdown = async () => {
+        if (!(await confirm({
+            title: "Shutdown",
+            message: "Wirklich runterfahren?",
+            confirmText: "Ja, runterfaren!",
+            cancelText: "Nein, bitte nicht"
+        }))) {
+            return;
+        }
+
+        if (await shutdownKiosk()) {
+            alert("Shutdown in progress.");
+        }
+    }
+
 
     return (
         <div>
@@ -93,6 +109,7 @@ function Kackkalendar() {
                 backgroundEventColor="brown"
                 firstDay={1}
             />
+            <button className="shutdown-button" onClick={triggerShutdown} >Shutdown</button>
         </div>
     )
 }

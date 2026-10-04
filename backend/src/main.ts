@@ -3,12 +3,13 @@ import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import { exec } from "child_process";
 
 dotenv.config();
 
 const BACKEND_PORT = process.env.BACKEND_PORT || 8090;
 const FRONTEND_PORT = process.env.FRONTEND_PORT || 2222;
-const DB_PATH = "database.db";
+const DB_PATH = process.env.DB_PATH || "database.db";
 sqlite3.verbose();
 const db = await open({
     filename: DB_PATH,
@@ -139,6 +140,19 @@ app.delete("/kackevent", async (req: Request, res: Response) => {
     } else {
         res.status(500).send();
     }
+})
+
+app.post('/shutdown', (req: Request, res: Response) => {
+    console.log("Shutdown requested via API endpoint");
+    res.status(200).json({ message: "Shutting down..." });
+
+    setTimeout(() => {
+        exec('sudo /sbin/shutdown -h now', (error, stdout, stderr) => {
+            if (error) {
+                console.error(`Shutdown failed: ${error.message}`);
+            }
+        })
+    }, 1000);
 })
 
 

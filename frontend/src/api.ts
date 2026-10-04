@@ -62,3 +62,15 @@ export async function deleteEvent(event: CalendarEvent): Promise<boolean> {
 
   return true;
 }
+
+export async function shutdownKiosk(): Promise<boolean> {
+  try {
+    const res = await fetch(baseUrl + "/shutdown", {
+      method: 'POST'
+    });
+    if (res.ok) return true;
+  } catch (e) {
+    console.error(`Failed to reach backend for shutdown: ${e}`)
+  }
+  return false;
+}
