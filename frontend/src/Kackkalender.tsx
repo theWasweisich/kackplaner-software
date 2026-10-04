@@ -107,7 +107,7 @@ function Kackkalender() {
         if (!(await confirm({
             title: "Shutdown",
             message: "Wirklich runterfahren?",
-            confirmText: "Ja, runterfaren!",
+            confirmText: "Ja, runterfahren!",
             cancelText: "Nein, bitte nicht"
         }))) {
             return;
