@@ -10,7 +10,7 @@ import './Kackkalendar.css';
 
 const BATCH_DELAY_MS = 1000;
 const EVENT_COLOR = "#0000b1";
-const EVENT_MICROLAX_COLOR = "#c54f4f";
+const EVENT_MICROLAX_COLOR = "#a52a2a";
 const EVENT_ICON = "💩";
 
 function Kackkalender() {
