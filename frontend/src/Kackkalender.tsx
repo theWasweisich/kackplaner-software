@@ -8,7 +8,12 @@ import interactionPlugin from "@fullcalendar/react/interaction";
 import formaThemePlugin from "@fullcalendar/react/themes/forma";
 import './Kackkalendar.css';
 
-function Kackkalendar() {
+const BATCH_DELAY_MS = 1000;
+const EVENT_COLOR = "brown";
+const EVENT_MICROLAX_COLOR = "#c54f4f";
+const EVENT_ICON = "💩";
+
+function Kackkalender() {
     const [events, setEvents] = useState<CalendarEvent[]>([])
     const confirm = useConfirm();
 
@@ -23,6 +28,19 @@ function Kackkalendar() {
     }
 
     const removeEventAtIndex = async (index: number) => {
+        const eventToRemove = events[index];
+
+        const pendingIndex = pendingCreates.current.findIndex(
+            (pendingEvent) => pendingEvent.start == eventToRemove.start
+        );
+
+        if (pendingIndex !== -1) {
+            pendingCreates.current.splice(pendingIndex, 1);
+
+            setEvents(prevEvents => prevEvents.filter((_, i) => i !== index));
+            return;
+        }
+
         const newEvents = [...events];
         const deletedEvent = newEvents.splice(index, 1)[0];
         const success = await deleteEvent(deletedEvent);
@@ -54,10 +72,11 @@ function Kackkalendar() {
 
         const newEvent: CalendarEvent = {
             display: "background",
-            title: '💩',
+            title: EVENT_ICON,
             start: arg.dateStr,
             allDay: true,
-            microlax: microlax
+            microlax: microlax,
+            color: microlax ? EVENT_COLOR : EVENT_MICROLAX_COLOR
         }
 
         setEvents(previousEvents => [...previousEvents, newEvent]);
@@ -70,7 +89,7 @@ function Kackkalendar() {
 
         createTimeout.current = window.setTimeout(async () => {
             await createPendingEvents();
-        }, 1000);
+        }, BATCH_DELAY_MS);
     }
 
     const createPendingEvents = async () => {
@@ -116,7 +135,7 @@ function Kackkalendar() {
                 dateClick={handleDateClick}
                 datesSet={handleDatesSet}
                 height="80vh"
-                backgroundEventColor="brown"
+                backgroundEventColor={EVENT_COLOR}
                 firstDay={1}
             />
             <button className="shutdown-button" onClick={triggerShutdown} >Shutdown</button>
@@ -124,4 +143,4 @@ function Kackkalendar() {
     )
 }
 
-export default Kackkalendar;
+export default Kackkalender;

@@ -5,6 +5,7 @@ export interface CalendarEvent {
   allDay: boolean;
   display: "background" | undefined;
   microlax?: boolean;
+  color?: string;
 }
 
 const baseUrl: string = `http://localhost:${import.meta.env.VITE_BACKEND_PORT || 8090}`;
