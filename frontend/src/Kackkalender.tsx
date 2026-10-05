@@ -9,8 +9,8 @@ import formaThemePlugin from "@fullcalendar/react/themes/forma";
 import './Kackkalendar.css';
 
 const BATCH_DELAY_MS = 1000;
-const EVENT_COLOR = "#0000b1";
-const EVENT_MICROLAX_COLOR = "#a52a2a";
+const EVENT_COLOR = "#a52a2a";
+const EVENT_MICROLAX_COLOR = "#0000b1";
 const EVENT_ICON = "💩";
 
 function formatNetworkEvent(networkEvent: NetworkEvent): CalendarEvent {
