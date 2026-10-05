@@ -1,0 +1,9 @@
+[Unit]
+Description=Kackplaner Alert Webhook
+
+[Service]
+Type=oneshot
+User=user
+Group=user
+EnvironmentFile=/opt/kackplaner.env
+ExecStart=/usr/bin/python3 /opt/kackplaner/notifier/notify.py
