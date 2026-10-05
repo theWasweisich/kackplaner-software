@@ -5,6 +5,11 @@ import urllib.request
 import urllib.error
 import json
 import sys
+import re
+
+def escape_markdown_v2(text: str) -> str:
+    """Escapes strings for Telegram's strict MarkdownV2 formatting."""
+    return re.sub(r'([_*\[\]()~`>#+\-=|{}.!])', r'\\\1', str(text))
 
 def alert_threshold_reached(webhook_url: str, days_since: int):
     webhook_token = os.environ.get("TELEGRAM_TOKEN")
@@ -20,10 +25,14 @@ def alert_threshold_reached(webhook_url: str, days_since: int):
 
     print("Threshold reached. Sending webhook event...")
 
+    escaped_days_since = escape_markdown_v2(str(days_since))
+
+    message_to_send = f"*Achtung*: Das letzte Kackevent war bereits {escaped_days_since} Tag{"" if days_since == 1 else "e"} her\\."
+
     payload = json.dumps({
         "chat_id": chat_id,
-        "text": f"Achtung: Das letzte Kackevent war bereits {days_since} Tag{"" if days_since == 1 else "e"} her.",
-        "parse_mode": "html"
+        "text": message_to_send,
+        "parse_mode": "MarkdownV2"
     }).encode("utf-8")
 
     req = urllib.request.Request(
