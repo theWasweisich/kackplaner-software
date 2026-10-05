@@ -15,7 +15,15 @@ REPO_DIR = Path(__file__).parent.resolve()
 BASE_DEST = Path(f'/opt/{APP_NAME}')
 MASTER_ENV = Path(f'/opt/{APP_NAME}.env')
 
-SERVICES = [f'{APP_NAME}-backend.service', f'{APP_NAME}-frontend.service']
+ACTIVE_SERVICES = [
+    f'{APP_NAME}-backend.service',
+    f'{APP_NAME}-frontend.service',
+    f'{APP_NAME}-alert.timer',
+]
+
+SYSTEMD_UNITS = ACTIVE_SERVICES + [
+    f"{APP_NAME}-alert.service"
+]
 
 # ==========================================
 # CORE UTILITIES
@@ -49,7 +57,8 @@ def sync_folder(src_dir: Path, dest_dir: Path, exclude: str | None = None):
     run_cmd(['chown', '-R', f"{APP_USER}:{APP_USER}", str(dest_dir)])
 
 def verify_prerequisites():
-    if os.geteuid() != 0:
+    get_euid = getattr(os, "geteuid", None)
+    if get_euid and get_euid() != 0:
         print("❌ This script must be run as root (use sudo).")
         sys.exit(1)
 
@@ -62,7 +71,7 @@ def manage_services(action: str):
     print(f"\n[DEPLOY] {action.capitalize()}ing services...")
     if action == "start":
         run_cmd(['systemctl', 'daemon-reload'])
-    run_cmd(['systemctl', action] + SERVICES)
+    run_cmd(['systemctl', action] + ACTIVE_SERVICES)
 
 def deploy_services():
     print("\n[DEPLOY] Deploying systemd services...")
@@ -70,6 +79,11 @@ def deploy_services():
     services_dest = BASE_DEST / "services"
 
     sync_folder(services_src, services_dest)
+
+    for unit_file in SYSTEMD_UNITS:
+        unit_path = services_dest / unit_file
+        if unit_path.exists():
+            run_cmd(['systemctl', 'link', str(unit_path)])
 
 def setup_data_directory():
     print("\n[DEPLOY] Setting up persistent data directory...")
