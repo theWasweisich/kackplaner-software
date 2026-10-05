@@ -78,7 +78,19 @@ export async function shutdownKiosk(): Promise<boolean> {
     });
     if (res.ok) return true;
   } catch (e) {
-    console.error(`Failed to reach backend for shutdown: ${e}`)
+    console.error(`Failed to reach backend for shutdown:`, e)
+  }
+  return false;
+}
+
+export async function rebootKiosk(): Promise<boolean> {
+  try {
+    const res = await fetch(baseUrl + "/reboot", {
+      method: 'POST'
+    });
+    if (res.ok) return true;
+  } catch (e) {
+    console.error(`Failed to reach backend for reboot:`, e)
   }
   return false;
 }

@@ -1,5 +1,5 @@
 import {useConfirm} from "./MicrolaxConfirmProvider.tsx";
-import {setScreenBrightness, shutdownKiosk} from "./api.ts";
+import {rebootKiosk, setScreenBrightness, shutdownKiosk} from "./api.ts";
 import './ControlButtons.css';
 import {useState} from "react";
 
@@ -10,6 +10,23 @@ interface ControlButtonsProps {
 export default function ControlButtons({ onBeforeShutdown }: ControlButtonsProps) {
     const [isAsleep, setIsAsleep] = useState<boolean>(false);
     const confirm = useConfirm();
+
+    const triggerRestart = async () => {
+        if (!(await confirm({
+            title: "Reboot",
+            message: "Wirklich neustarten?",
+            confirmText: "Ja, neustarten!",
+            cancelText: "Nein, bitte nicht!",
+        }))) {
+            return;
+        }
+
+        await onBeforeShutdown();
+
+        if (await rebootKiosk()) {
+            alert("Rebooting...");
+        }
+    }
 
     const triggerShutdown = async () => {
         if (!(await confirm({
@@ -47,10 +64,11 @@ export default function ControlButtons({ onBeforeShutdown }: ControlButtonsProps
         <>
             <div className="control-buttons">
                 <button className="shutdown-button" onClick={triggerShutdown}>Shutdown</button>
+                <button className="restart-button" onClick={triggerRestart}>Restart</button>
+                <button className="sleep-screen-button" onClick={sleepScreen}>Sleep</button>
+
                 <button className="brightness-dim-button" onClick={() => triggerSetBrightness(25)} >Dim</button>
                 <button className="brightness-bright-button" onClick={() => triggerSetBrightness(255)} >Bright</button>
-
-                <button className="sleep-screen-button" onClick={sleepScreen}>Sleep</button>
             </div>
 
             {isAsleep && (

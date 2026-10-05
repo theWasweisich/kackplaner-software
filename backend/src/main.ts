@@ -179,12 +179,24 @@ app.post('/shutdown', (req: Request, res: Response) => {
     res.status(200).json({ message: "Shutting down..." });
 
     setTimeout(() => {
-        exec('sudo /sbin/shutdown -h now', (error) => {
+        exec('sudo /bin/systemctl poweroff', (error) => {
             if (error) {
                 console.error(`Shutdown failed: ${error.message}`);
             }
         })
     }, 1000);
+})
+
+app.post("/reboot", (req: Request, res: Response) => {
+
+    res.status(200).json({ message: "Rebooting..." });
+    setTimeout(() => {
+        exec('sudo systemctl reboot', (error) => {
+            if (error) {
+                console.error("Reboot failed:", error);
+            }
+        });
+    }, 1000)
 })
 
 function setScreenBrightness(brightness: number): boolean {

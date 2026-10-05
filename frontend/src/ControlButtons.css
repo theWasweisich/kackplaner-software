@@ -11,6 +11,10 @@
         inset: 5px;
         background-color: transparent;
     }
+
+    & :nth-last-child(2) {
+        margin-left: auto;
+    }
 }
 
 .wakeup-shield {
