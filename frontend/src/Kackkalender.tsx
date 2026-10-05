@@ -1,5 +1,5 @@
 import {useRef, useState} from "react";
-import {type CalendarEvent, createEvents, deleteEvent, fetchEvents, shutdownKiosk} from "./api.ts";
+import {type CalendarEvent, createEvents, deleteEvent, fetchEvents, type NetworkEvent, shutdownKiosk} from "./api.ts";
 import {useConfirm} from "./MicrolaxConfirmProvider.tsx";
 import FullCalendar, {type DateClickInfo, type DatesSetInfo} from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/react/daygrid";
@@ -13,6 +13,27 @@ const EVENT_COLOR = "#0000b1";
 const EVENT_MICROLAX_COLOR = "#a52a2a";
 const EVENT_ICON = "💩";
 
+function formatNetworkEvent(networkEvent: NetworkEvent): CalendarEvent {
+    return {
+        id: networkEvent.id,
+        start: networkEvent.start,
+        display: "background",
+        microlax: networkEvent.microlax,
+        color: networkEvent.microlax ? EVENT_MICROLAX_COLOR : EVENT_COLOR,
+        allDay: true,
+        title: networkEvent.title
+    }
+}
+
+function formatCalendarEvent(calendarEvent: CalendarEvent): NetworkEvent {
+    return {
+        id: calendarEvent.id,
+        title: calendarEvent.title,
+        microlax: calendarEvent.microlax,
+        start: calendarEvent.start,
+    }
+}
+
 function Kackkalender() {
     const [events, setEvents] = useState<CalendarEvent[]>([])
     const confirm = useConfirm();
@@ -23,7 +44,8 @@ function Kackkalender() {
     const handleDatesSet = async (dateInfo: DatesSetInfo) => {
         const fetchedEvents = await fetchEvents(dateInfo.startStr, dateInfo.endStr)
         if (fetchedEvents && fetchedEvents.length > 0) {
-            setEvents(fetchedEvents)
+            const calendarEvents: CalendarEvent[] = fetchedEvents.map(formatNetworkEvent)
+            setEvents(calendarEvents)
         }
     }
 
@@ -53,9 +75,7 @@ function Kackkalender() {
         const clickedDateStr = arg.dateStr;
 
         const eventIndex: number = events.findIndex((event: CalendarEvent) => {
-            const eventDate = new Date(event.start);
-            const eventDateStr = `${eventDate.getFullYear()}-${String(eventDate.getMonth() + 1).padStart(2, '0')}-${String(eventDate.getDate()).padStart(2, '0')}`;
-            return eventDateStr === clickedDateStr;
+            return event.start === clickedDateStr;
         });
 
         if (eventIndex !== -1) {
@@ -70,13 +90,13 @@ function Kackkalender() {
             cancelText: 'Nein'
         });
 
-        addEvent(arg.date, microlax);
+        addEvent(arg.dateStr, microlax);
     }
 
-    const addEvent = (startDate: Date, microlax: boolean) => {
+    const addEvent = (startDateStr: string, microlax: boolean) => {
         const newEvent: CalendarEvent = {
             title: EVENT_ICON,
-            start: startDate.toISOString(),
+            start: startDateStr,
             allDay: true,
             microlax: microlax,
             color: microlax ? EVENT_MICROLAX_COLOR : EVENT_COLOR,
@@ -100,7 +120,9 @@ function Kackkalender() {
         const eventsToSend = [...pendingCreates.current];
         pendingCreates.current = [];
 
-        await createEvents(eventsToSend);
+        const networkEvents: NetworkEvent[] = eventsToSend.map(formatCalendarEvent);
+
+        await createEvents(networkEvents);
     }
 
     const triggerShutdown = async () => {

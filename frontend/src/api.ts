@@ -1,3 +1,10 @@
+export interface NetworkEvent {
+  id?: string;
+  title: string;
+  start: string;
+  microlax?: boolean;
+}
+
 export interface CalendarEvent {
   id?: string;
   title: string;
@@ -10,16 +17,16 @@ export interface CalendarEvent {
 
 const baseUrl: string = `http://localhost:${import.meta.env.VITE_BACKEND_PORT || 8090}`;
 
-export async function fetchEvents(startStr: string, endStr: string): Promise<CalendarEvent[]> {
-  let events: CalendarEvent[] = [];
+export async function fetchEvents(startStr: string, endStr: string): Promise<NetworkEvent[]> {
+  let events: NetworkEvent[] = [];
   try {
     console.log(`[API] Fetching events from: /get?start=${startStr}&end=${endStr}`);
-    const res = await fetch(baseUrl + `/kackevent?start=${startStr}&end=${endStr}`);
+    const res: Response = await fetch(baseUrl + `/kackevent?start=${startStr}&end=${endStr}`);
     if (!res.ok) {
       console.error(`Server error: ${res.status} (${res.statusText})`);
       return events;
     }
-    const data: { events: CalendarEvent[] } = await res.json();
+    const data: { events: NetworkEvent[] } = await res.json();
     events = data.events;
   } catch (error) {
     console.error("[API] Failed to fetch events", error);
@@ -27,7 +34,7 @@ export async function fetchEvents(startStr: string, endStr: string): Promise<Cal
   return events;
 }
 
-export async function createEvents(events: CalendarEvent[]): Promise<CalendarEvent[]> {
+export async function createEvents(events: NetworkEvent[]): Promise<NetworkEvent[]> {
   try {
     console.log("[API] Sending buffered creations to /create:", events);
     const res = await fetch(baseUrl + "/kackevent", {
@@ -47,7 +54,7 @@ export async function createEvents(events: CalendarEvent[]): Promise<CalendarEve
   }
 }
 
-export async function deleteEvent(event: CalendarEvent): Promise<boolean> {
+export async function deleteEvent(event: NetworkEvent): Promise<boolean> {
 
   try {
     const res = await fetch(baseUrl + `/kackevent?date=${event.start}`, {

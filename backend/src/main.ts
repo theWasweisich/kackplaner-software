@@ -28,77 +28,88 @@ const createTableSQLString = `
         id INTEGER PRIMARY KEY,
         title TEXT,
         start TEXT,
-        allDay INTEGER,
-        display TEXT,
         microlax INTEGER
     );
 `
 
 db.run(createTableSQLString).catch(reason => console.error(`Error during creation of db schema: ${reason}`));
 
-interface CalendarEvent {
+interface NetworkEvent {
     id?: string;
     title: string;
     start: string;
-    allDay: boolean;
-    display?: string;
     microlax?: boolean;
 }
 
 interface KackeventPutBody {
-    events: CalendarEvent[]
+    events: NetworkEvent[]
 }
+
+function isValidDateString(dateString: string): boolean {
+    if (typeof dateString !== "string") return false;
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateString)) return false;
+
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) return false;
+
+    return date.toISOString().substring(0, 10) === dateString;
+}
+
 app.use(express.json());
 
 app.put("/kackevent", async (req: Request, res: Response) => {
-    const stmt = await db.prepare(
-        "INSERT INTO events (id, title, start, allDay, display, microlax) VALUES (?, ?, ?, ?, ?, ?)"
-    );
-
     const putBody = req.body as KackeventPutBody;
 
     for (const event of putBody.events) {
-        event.microlax = event.microlax ? event.microlax : false;
+
+        if (!isValidDateString(event.start)) {
+            res.status(400).json({ error: "Invalid date format", date: event.start });
+            return;
+        }
+    }
+
+
+    const stmt = await db.prepare(
+        "INSERT INTO events (id, title, start, microlax) VALUES (?, ?, ?, ?)"
+    );
+
+    for (const event of putBody.events) {
+        event.microlax = !!event.microlax;
         await stmt.bind(
             event.id,
             event.title,
             event.start,
-            event.allDay,
-            event.display,
             event.microlax
         );
         stmt.run();
     }
+
+    console.log("Inserted events:", putBody.events);
 
     res.status(201).json({
         "events": putBody.events
     });
 });
 
-function getDateFromQueryParam(queryParam: string): Date {
-    return new Date(queryParam.replace(" ", "+"));
-}
-
-function getStartEndFromQuery(req: Request): { start: Date, end: Date } {
-    const queryParams: { start: string, end: string } = req.query as { start: string, end: string };
-
-    return {
-        start: getDateFromQueryParam(queryParams.start),
-        end: getDateFromQueryParam(queryParams.end)
-    }
-}
-
 app.get("/kackevent", async (req: Request, res: Response) => {
-    const dates = getStartEndFromQuery(req);
+    const startStr = req.query.start;
+    const endStr = req.query.end;
 
-    const dbRes: CalendarEvent[] = await db.all(
+    const cleanStart = typeof startStr === "string" ? startStr.substring(0, 10) : "";
+    const cleanEnd = typeof endStr === "string" ? endStr.substring(0, 10) : "";
+
+    if (!isValidDateString(cleanStart) || !isValidDateString(cleanEnd)) {
+        res.status(400).json({ error: "Invalid date format", start: startStr, end: endStr });
+        return;
+    }
+
+    const dbRes: NetworkEvent[] = await db.all(
         `
         SELECT
              id,
              title,
              start,
-             allDay,
-             display,
              microlax
         FROM
             events
@@ -106,7 +117,7 @@ app.get("/kackevent", async (req: Request, res: Response) => {
             unixepoch(?) < unixepoch(start)
           AND
             unixepoch(?) > unixepoch(start)`,
-        dates.start.toISOString(), dates.end.toISOString()
+        cleanStart, cleanEnd
     );
 
     console.log("DB Res: ", dbRes);
@@ -117,11 +128,16 @@ app.get("/kackevent", async (req: Request, res: Response) => {
 })
 
 app.delete("/kackevent", async (req: Request, res: Response) => {
-    const queryParams: { date: string } = req.query as { date: string }
-    const date = getDateFromQueryParam(queryParams.date);
+    const dateQuery = req.query.date;
+
+    const dateStr = typeof dateQuery === 'string' ? dateQuery.substring(0, 10) : "";
+
+    if (!isValidDateString(dateStr)) {
+        res.status(400).json({ error: "Invalid date format", date: dateQuery });
+    }
 
     const dateExists: boolean = (
-        (await db.get("SELECT * FROM events WHERE unixepoch(start) == unixepoch(?)", date.toISOString()))
+        (await db.get("SELECT * FROM events WHERE unixepoch(start) == unixepoch(?)", dateStr))
         !== undefined
     );
 
@@ -132,7 +148,7 @@ app.delete("/kackevent", async (req: Request, res: Response) => {
 
     const dbRes = await db.run(
         "DELETE FROM events WHERE unixepoch(start) == unixepoch(?)",
-        date.toISOString()
+        dateStr
     )
     if (dbRes.changes && dbRes.changes == 1) {
         res.status(200).send();
