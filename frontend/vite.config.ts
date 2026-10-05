@@ -8,5 +8,8 @@ export default defineConfig({
     allowedHosts: [
         "192.168.100"
     ]
+  },
+  build: {
+    chunkSizeWarningLimit: 1000
   }
 })
