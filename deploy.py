@@ -64,6 +64,13 @@ def manage_services(action: str):
         run_cmd(['systemctl', 'daemon-reload'])
     run_cmd(['systemctl', action] + SERVICES)
 
+def deploy_services():
+    print("\n[DEPLOY] Deploying systemd services...")
+    services_src = REPO_DIR / "services"
+    services_dest = BASE_DEST / "services"
+
+    sync_folder(services_src, services_dest)
+
 def setup_data_directory():
     print("\n[DEPLOY] Setting up persistent data directory...")
     data_dest = BASE_DEST / 'data'
@@ -118,6 +125,7 @@ def main():
         deploy_backend()
         deploy_notifier()
         deploy_frontend()
+        deploy_services()
         
         manage_services('start')
         reload_display()
