@@ -4,6 +4,8 @@ import { open } from 'sqlite';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { exec } from "child_process";
+import path from 'path';
+import fs from 'fs';
 
 dotenv.config();
 
@@ -11,6 +13,21 @@ const BACKEND_PORT = process.env.BACKEND_PORT || 8090;
 // noinspection JSUnusedLocalSymbols
 const FRONTEND_PORT = process.env.FRONTEND_PORT || 2222;
 const DB_PATH = process.env.DB_PATH || "database.db";
+
+const BACKLIGHT_BASE = '/sys/class/backlight/';
+let brightnessFile: string | null = null;
+
+try {
+    const folders = fs.readdirSync(BACKLIGHT_BASE);
+    if (folders.length > 0) {
+        brightnessFile = path.join(BACKLIGHT_BASE, folders[0], 'brightness');
+        console.log(`[Display] Bound to backlight file: ${brightnessFile}`);
+    }
+} catch (e) {
+    console.error("Could not find brightness file!");
+}
+
+
 sqlite3.verbose();
 const db = await open({
     filename: DB_PATH,
@@ -170,6 +187,41 @@ app.post('/shutdown', (req: Request, res: Response) => {
     }, 1000);
 })
 
+function setScreenBrightness(brightness: number): boolean {
+    if (typeof brightness !== "number") return false;
+    if (brightness > 255 || brightness < 0) { return false; }
+    if (!brightnessFile) {
+        console.error("No brightness file found.");
+        return false;
+    }
+
+    try {
+        fs.writeFileSync(brightnessFile, brightness.toString(), 'utf-8');
+        return true;
+    } catch (err) {
+        console.error(`Error setting screen brightness:`, err);
+        return false;
+    }
+}
+
+app.post("/display/brightness", (req, res) => {
+    const queryBrightness = req.query.brightness;
+    if (typeof queryBrightness !== "string") {
+        return res.sendStatus(400);
+    }
+    const numberBrightness = parseInt(queryBrightness);
+
+    if (Number.isNaN(numberBrightness)) {
+        return res.sendStatus(400);
+    }
+
+    const success = setScreenBrightness(numberBrightness);
+    if (success) {
+        return res.sendStatus(200);
+    } else {
+        return res.sendStatus(500);
+    }
+});
 
 app.listen(BACKEND_PORT, () => {
     // noinspection HttpUrlsUsage

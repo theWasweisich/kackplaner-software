@@ -82,3 +82,15 @@ export async function shutdownKiosk(): Promise<boolean> {
   }
   return false;
 }
+
+export async function setScreenBrightness(brightness: number): Promise<boolean> {
+  try {
+    const res = await fetch(baseUrl + `/display/brightness?brightness=${brightness}`, {
+      method: 'POST'
+    });
+    if (res.ok) return true;
+  } catch (e) {
+    console.error("Failed to reach backend for setting brightness:", e);
+  }
+  return false;
+}

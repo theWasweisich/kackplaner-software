@@ -41,7 +41,7 @@ def run_cmd(cmd: list[str], cwd: str | Path | None = None, run_as: str | None = 
     try:
         subprocess.run(cmd, cwd=cwd, check=True, text=True)
     except subprocess.CalledProcessError as e:
-        print(f"\n❌ Command failed with exit code {e.returncode}")
+        deploy_print(f"\n❌ Command failed with exit code {e.returncode}")
         raise DeployError()
 
 def sync_folder(src_dir: Path, dest_dir: Path, exclude: str | None = None):
@@ -56,25 +56,28 @@ def sync_folder(src_dir: Path, dest_dir: Path, exclude: str | None = None):
     run_cmd(rsync_cmd)
     run_cmd(['chown', '-R', f"{APP_USER}:{APP_USER}", str(dest_dir)])
 
+def deploy_print(msg: str):
+    print(f"\n[DEPLOY] {msg}")
+
 def verify_prerequisites():
     get_euid = getattr(os, "geteuid", None)
     if get_euid and get_euid() != 0:
-        print("❌ This script must be run as root (use sudo).")
+        deploy_print("❌ This script must be run as root (use sudo).")
         sys.exit(1)
 
     if not MASTER_ENV.exists():
-        print(f"❌ Master config not found at {MASTER_ENV}")
+        deploy_print(f"❌ Master config not found at {MASTER_ENV}")
         sys.exit(1)
 
 def manage_services(action: str):
     """Handles stopping or starting the systemd services."""
-    print(f"\n[DEPLOY] {action.capitalize()}ing services...")
+    deploy_print(f"{action.capitalize()}ing services...")
     if action == "start":
         run_cmd(['systemctl', 'daemon-reload'])
     run_cmd(['systemctl', action] + ACTIVE_SERVICES)
 
 def deploy_services():
-    print("\n[DEPLOY] Deploying systemd services...")
+    deploy_print("Deploying systemd services...")
     services_src = REPO_DIR / "services"
     services_dest = BASE_DEST / "services"
 
@@ -86,13 +89,13 @@ def deploy_services():
             run_cmd(['systemctl', 'link', str(unit_path)])
 
 def setup_data_directory():
-    print("\n[DEPLOY] Setting up persistent data directory...")
+    deploy_print("Setting up persistent data directory...")
     data_dest = BASE_DEST / 'data'
     data_dest.mkdir(parents=True, exist_ok=True)
     run_cmd(['chown', '-R', f"{APP_USER}:{APP_USER}", str(data_dest)])
 
 def deploy_backend():
-    print("\n[DEPLOY] Deploying Backend...")
+    deploy_print("Deploying Backend...")
     backend_dest = BASE_DEST / 'backend'
     
     sync_folder(REPO_DIR / 'backend', backend_dest, exclude="node_modules")
@@ -100,7 +103,7 @@ def deploy_backend():
     run_cmd(['npx', 'tsc'], cwd=backend_dest, run_as=APP_USER)
 
 def deploy_notifier():
-    print("\n[DEPLOY] Deploying Notifier...")
+    deploy_print("Deploying Notifier...")
     notifier_dest = BASE_DEST / 'notifier'
     
     sync_folder(REPO_DIR / 'notifier', notifier_dest)
@@ -110,7 +113,7 @@ def deploy_notifier():
         run_cmd(["chmod", "+x", str(alert_script)])
 
 def deploy_frontend():
-    print("\n[DEPLOY] Deploying Frontend...")
+    deploy_print("Deploying Frontend...")
     frontend_src = REPO_DIR / 'frontend'
     frontend_env_temp = frontend_src / '.env'
     
@@ -126,7 +129,7 @@ def deploy_frontend():
             print("  > Cleaned up temporary frontend .env file")
 
 def reload_display():
-    print("\n[DEPLOY] Restarting Chromium display...")
+    deploy_print("Restarting Chromium display...")
     subprocess.run(['pkill', '-f', 'chromium'], stderr=subprocess.DEVNULL)
 
 def main():
@@ -144,9 +147,9 @@ def main():
         manage_services('start')
         reload_display()
         
-        print("\n✅ Deployment complete!")
+        deploy_print("✅ Deployment complete!")
     except DeployError:
-        print("\n🚨 Deployment aborted due to an error.")
+        deploy_print("🚨 Deployment aborted due to an error.")
         sys.exit(1)
 
 if __name__ == '__main__':

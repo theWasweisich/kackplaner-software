@@ -1,5 +1,5 @@
 import {useRef, useState} from "react";
-import {type CalendarEvent, createEvents, deleteEvent, fetchEvents, type NetworkEvent, shutdownKiosk} from "./api.ts";
+import {type CalendarEvent, createEvents, deleteEvent, fetchEvents, type NetworkEvent} from "./api.ts";
 import {useConfirm} from "./MicrolaxConfirmProvider.tsx";
 import FullCalendar, {type DateClickInfo, type DatesSetInfo} from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/react/daygrid";
@@ -7,6 +7,7 @@ import timeGridPlugin from "@fullcalendar/react/timegrid";
 import interactionPlugin from "@fullcalendar/react/interaction";
 import formaThemePlugin from "@fullcalendar/react/themes/forma";
 import './Kackkalendar.css';
+import ControlButtons from "./ControlButtons.tsx";
 
 const BATCH_DELAY_MS = 1000;
 const EVENT_COLOR = "#a52a2a";
@@ -125,27 +126,13 @@ function Kackkalender() {
         await createEvents(networkEvents);
     }
 
-    const triggerShutdown = async () => {
-        if (!(await confirm({
-            title: "Shutdown",
-            message: "Wirklich runterfahren?",
-            confirmText: "Ja, runterfahren!",
-            cancelText: "Nein, bitte nicht"
-        }))) {
-            return;
-        }
-
-        if (createTimeout.current !== null && pendingCreates.current.length > 0) {
-            console.log(`${pendingCreates.current.length} events need to be created before shutdown`);
-            createTimeout.current = null;
-            await createPendingEvents();
-        }
-
-        if (await shutdownKiosk()) {
-            alert("Shutdown in progress.");
-        }
+    const flushPendingEvents = async () => {
+        if (createTimeout.current === null || pendingCreates.current.length <= 0) return;
+        console.log(`${pendingCreates.current.length} events need to be created before shutdown`);
+        clearTimeout(createTimeout.current);
+        createTimeout.current = null;
+        await createPendingEvents();
     }
-
 
     return (
         <div>
@@ -164,9 +151,7 @@ function Kackkalender() {
                 backgroundEventColor={EVENT_COLOR}
                 firstDay={1}
             />
-            <div className="control-buttons">
-                <button className="shutdown-button" onClick={triggerShutdown}>Shutdown</button>
-            </div>
+            <ControlButtons onBeforeShutdown={flushPendingEvents} />
         </div>
     )
 }

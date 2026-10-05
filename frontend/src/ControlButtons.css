@@ -1,0 +1,14 @@
+.control-buttons {
+    display: flex;
+    flex-direction: row;
+    font-size: large;
+    gap: 1rem;
+
+    & button {
+        border-radius: 0.625rem;
+        margin-top: 0.75rem;
+        padding: .75rem 1rem;
+        inset: 5px;
+        background-color: transparent;
+    }
+}
