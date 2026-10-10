@@ -79,7 +79,10 @@ def manage_services(action: str):
         run_cmd(['systemctl', action] + ACTIVE_SERVICES)
     elif action == "stop":
         for service in ACTIVE_SERVICES:
-            run_cmd(['systemctl', action, service])
+            try:
+                run_cmd(['systemctl', action, service])
+            except:
+                pass
 
 def deploy_services():
     deploy_print("Deploying systemd services...")
