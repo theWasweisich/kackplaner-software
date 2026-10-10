@@ -1,58 +1,20 @@
 #!/usr/bin/env python3
 import os
 import sqlite3
-import urllib.request
-import urllib.error
-import json
 import sys
-import re
+from telegram_client import send_webhook_message, WebhookResult, escape_markdown_v2
 
-def escape_markdown_v2(text: str) -> str:
-    """Escapes strings for Telegram's strict MarkdownV2 formatting."""
-    return re.sub(r'([_*\[\]()~`>#+\-=|{}.!])', r'\\\1', str(text))
-
-def alert_threshold_reached(webhook_url: str, days_since: int):
-    webhook_token = os.environ.get("TELEGRAM_TOKEN")
-    chat_id = os.environ.get("CHAT_ID")
-
-    if not webhook_token:
-        print("No webhook token provided!")
-        return
-
-    if not chat_id:
-        print("No chat id provided")
-        return
-
+def alert_threshold_reached(days_since: int):
     print("Threshold reached. Sending webhook event...")
 
     escaped_days_since = escape_markdown_v2(str(days_since))
 
     message_to_send = f"*Achtung*: Das letzte Kackevent war bereits {escaped_days_since} Tag{"" if days_since == 1 else "e"} her\\."
 
-    payload = json.dumps({
-        "chat_id": chat_id,
-        "text": message_to_send,
-        "parse_mode": "MarkdownV2"
-    }).encode("utf-8")
+    result = send_webhook_message(message_to_send)
 
-    req = urllib.request.Request(
-        url=webhook_url + webhook_token + "/sendMessage",
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": "Kackplaner-Bot/1.0"
-        }
-    )
-
-    try:
-        urllib.request.urlopen(req, timeout=5)
-        print("Webhook sent successfully")
-    except urllib.error.HTTPError as e:
-        error_details = e.read().decode("utf-8")
-        print(f"Telegram API Error ({e.code})")
-        print(error_details)
-    except Exception as e:
-        print(f"Network Error: {e}")
+    if result == WebhookResult.CONFIG_MISSING:
+        sys.exit(1)
 
 
 def get_days_since_last_event(db_path: str) -> int | None:
@@ -83,15 +45,10 @@ LIMIT 1;
 
 def main():
     db_path = os.environ.get("DB_PATH", "./database.db")
-    webhook_url = os.environ.get("WEBHOOK_URL")
-
-    if not webhook_url:
-        print("ERROR: WEBHOOK_URL not set")
-        return
 
     if len(sys.argv) > 1 and sys.argv[1] == "--test":
         print("Running in test mode. Forcing webhook execution")
-        alert_threshold_reached(webhook_url, 99)
+        alert_threshold_reached(99)
         return
 
     days_since = get_days_since_last_event(db_path=db_path)
@@ -102,7 +59,7 @@ def main():
     print(f"Last event was {days_since} days ago")
 
     if days_since > 3:
-        alert_threshold_reached(webhook_url=webhook_url, days_since=days_since)
+        alert_threshold_reached(days_since=days_since)
 
 if __name__ == "__main__":
     main()

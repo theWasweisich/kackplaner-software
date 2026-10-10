@@ -19,10 +19,12 @@ ACTIVE_SERVICES = [
     f'{APP_NAME}-backend.service',
     f'{APP_NAME}-frontend.service',
     f'{APP_NAME}-alert.timer',
+    f'{APP_NAME}-alert-temp.timer',
 ]
 
 SYSTEMD_UNITS = ACTIVE_SERVICES + [
-    f"{APP_NAME}-alert.service"
+    f"{APP_NAME}-alert.service",
+    f"{APP_NAME}-alert-temp.service",
 ]
 
 # ==========================================

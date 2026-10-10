@@ -1,11 +1,15 @@
-import express, { type Request, type Response } from 'express';
+import express, {type Request, type Response} from 'express';
 import sqlite3 from 'sqlite3';
-import { open } from 'sqlite';
+import {open} from 'sqlite';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { exec } from "child_process";
+import {exec} from "child_process";
 import path from 'path';
 import fs from 'fs';
+
+const HTTP_STATUS_CODES = {
+    OK: 200
+}
 
 dotenv.config();
 
@@ -109,6 +113,48 @@ app.put("/kackevent", async (req: Request, res: Response) => {
     });
 });
 
+async function getEvents(fromStr?: string, toStr?: string): Promise<NetworkEvent[] | undefined> {
+    if (fromStr != null && toStr == null) return;
+
+    if (toStr != null) {
+        const dbRes: NetworkEvent[] = await db.all(
+            `
+        SELECT
+             id,
+             title,
+             start,
+             microlax
+        FROM
+            events
+        WHERE
+            unixepoch(?) < unixepoch(start)
+          AND
+            unixepoch(?) > unixepoch(start)`,
+            fromStr, toStr
+        );
+
+        console.log("DB Res (constrained):", dbRes);
+
+        return dbRes;
+    }
+
+    const dbRes: NetworkEvent[] = await db.all(
+        `
+            SELECT
+                id,
+                title,
+                start,
+                microlax
+            FROM
+                events;
+            `
+    )
+
+    console.log("DB Res (unconstrained):", dbRes);
+
+    return dbRes;
+}
+
 app.get("/kackevent", async (req: Request, res: Response) => {
     const startStr = req.query.start;
     const endStr = req.query.end;
@@ -121,26 +167,21 @@ app.get("/kackevent", async (req: Request, res: Response) => {
         return;
     }
 
-    const dbRes: NetworkEvent[] = await db.all(
-        `
-        SELECT
-             id,
-             title,
-             start,
-             microlax
-        FROM
-            events
-        WHERE
-            unixepoch(?) < unixepoch(start)
-          AND
-            unixepoch(?) > unixepoch(start)`,
-        cleanStart, cleanEnd
-    );
+    const dbRes = await getEvents(cleanStart, cleanEnd);
 
-    console.log("DB Res: ", dbRes);
+    if (dbRes === undefined) return res.status(500).json({ error: '?', start: startStr, end: endStr });
+
 
     res.json({
         "events": dbRes
+    })
+});
+
+app.get("/kackevent/dump", async (req: Request, res: Response) => {
+    const dbRes = await getEvents();
+    if (dbRes === undefined) return res.sendStatus(500);
+    return res.json({
+        'events': dbRes
     })
 })
 
@@ -231,7 +272,7 @@ app.post("/display/brightness", (req, res) => {
     if (success) {
         return res.sendStatus(200);
     } else {
-        return res.sendStatus(500);
+        return res.sendStatus(503);
     }
 });
 
