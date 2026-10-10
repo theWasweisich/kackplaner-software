@@ -76,7 +76,9 @@ def manage_services(action: str):
     deploy_print(f"{action.capitalize()}ing services...")
     if action == "start":
         run_cmd(['systemctl', 'daemon-reload'])
-    run_cmd(['systemctl', action] + ACTIVE_SERVICES)
+    elif action == "stop":
+        for service in ACTIVE_SERVICES:
+            run_cmd(['systemctl', action, service])
 
 def deploy_services():
     deploy_print("Deploying systemd services...")
@@ -113,6 +115,10 @@ def deploy_notifier():
     alert_script = notifier_dest / 'notify.py'
     if alert_script.exists():
         run_cmd(["chmod", "+x", str(alert_script)])
+
+    alert_temp_script = notifier_dest / 'temp.notify.py'
+    if alert_temp_script.exists():
+        run_cmd(["chmod", "+x", str(alert_temp_script)])
 
 def deploy_frontend():
     deploy_print("Deploying Frontend...")
