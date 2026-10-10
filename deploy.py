@@ -76,6 +76,7 @@ def manage_services(action: str):
     deploy_print(f"{action.capitalize()}ing services...")
     if action == "start":
         run_cmd(['systemctl', 'daemon-reload'])
+        run_cmd(['systemctl', action] + ACTIVE_SERVICES)
     elif action == "stop":
         for service in ACTIVE_SERVICES:
             run_cmd(['systemctl', action, service])
