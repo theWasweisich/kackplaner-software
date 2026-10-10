@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Kackplaner Temperature Alert Every 10 minutes
+
+[Timer]
+# Executes every 10 minute, every hour
+OnCalendar*:0/10
+Persistent=true
+
+[Install]
+WantedBy=timers.target
