@@ -14,7 +14,7 @@ interface NetworkEvent {
 dotenv.config();
 
 const EXTERNAL_PORT = parseInt(process.env.EXTERNAL_PORT as string) || 8090;
-const EXTERNAL_INTERFACE = "[::]";
+const EXTERNAL_INTERFACE = "::";
 const DB_PATH = process.env.DB_PATH || "database.db";
 
 console.log(`Setting up database at ${DB_PATH}`)
