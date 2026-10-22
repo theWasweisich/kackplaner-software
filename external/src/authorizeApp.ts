@@ -1,7 +1,7 @@
 import Database, { SqliteError} from "better-sqlite3";
 import dotenv from 'dotenv';
 import crypto from 'crypto';
-import {Argument, program} from 'commander';
+import {program} from 'commander';
 
 program
     .argument("<clientId>", "The clientID associated with this client")

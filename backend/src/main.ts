@@ -6,10 +6,6 @@ import {exec} from "child_process";
 import path from 'path';
 import fs from 'fs';
 
-const HTTP_STATUS_CODES = {
-    OK: 200
-}
-
 dotenv.config();
 
 const BACKEND_PORT = process.env.BACKEND_PORT || 8090;

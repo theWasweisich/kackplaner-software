@@ -1,6 +1,6 @@
 import requireHmacAuth from './hmacAuthMiddleware.ts'
 import Database from "better-sqlite3";
-import express, { type Request, type Response, type NextFunction } from "express";
+import express, { type Request, type Response } from "express";
 import cors from 'cors';
 import dotenv from "dotenv";
 
