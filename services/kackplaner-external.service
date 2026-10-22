@@ -1,0 +1,17 @@
+[Unit]
+Description=Kackplaner External Service
+After=network.target
+
+[Service]
+Type=simple
+User=user
+Group=user
+WorkingDirectory=/opt/kackplaner/external/
+EnvironmentFile=/opt/kackplaner.env
+
+ExecStart=/usr/bin/node /opt/kackplaner/external/src/main.js
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

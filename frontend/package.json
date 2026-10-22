@@ -15,11 +15,13 @@
     "@emotion/styled": "^11.14.1",
     "@fullcalendar/react": "^7.1.0",
     "@mui/material": "^9.4.0",
+    "better-sqlite3": "^13.0.3",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "temporal-polyfill": "^1.0.5"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",

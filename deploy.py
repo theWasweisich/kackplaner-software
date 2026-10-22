@@ -16,6 +16,7 @@ BASE_DEST = Path(f'/opt/{APP_NAME}')
 MASTER_ENV = Path(f'/opt/{APP_NAME}.env')
 
 ACTIVE_SERVICES = [
+    f'{APP_NAME}-external.service',
     f'{APP_NAME}-backend.service',
     f'{APP_NAME}-frontend.service',
     f'{APP_NAME}-alert.timer',

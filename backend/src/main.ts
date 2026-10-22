@@ -1,6 +1,5 @@
 import express, {type Request, type Response} from 'express';
-import sqlite3 from 'sqlite3';
-import {open} from 'sqlite';
+import Database from 'better-sqlite3';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import {exec} from "child_process";
@@ -32,11 +31,9 @@ try {
 }
 
 
-sqlite3.verbose();
-const db = await open({
-    filename: DB_PATH,
-    driver: sqlite3.Database
-});
+const db = new Database(DB_PATH);
+db.pragma("journal_mode = WAL");
+db.pragma("busy_timeout = 5000");
 
 const app = express();
 
@@ -53,7 +50,11 @@ const createTableSQLString = `
     );
 `
 
-db.run(createTableSQLString).catch(reason => console.error(`Error during creation of db schema: ${reason}`));
+try {
+    db.prepare(createTableSQLString).run();
+} catch (e) {
+    console.error(`Error during Schema creation: `, e);
+}
 
 interface NetworkEvent {
     id?: string;
@@ -91,19 +92,18 @@ app.put("/kackevent", async (req: Request, res: Response) => {
     }
 
 
-    const stmt = await db.prepare(
+    const stmt = db.prepare(
         "INSERT INTO events (id, title, start, microlax) VALUES (?, ?, ?, ?)"
     );
 
     for (const event of putBody.events) {
         event.microlax = !!event.microlax;
-        await stmt.bind(
+        stmt.run(
             event.id,
             event.title,
             event.start,
             event.microlax
         );
-        stmt.run();
     }
 
     console.log("Inserted events:", putBody.events);
@@ -113,49 +113,51 @@ app.put("/kackevent", async (req: Request, res: Response) => {
     });
 });
 
-async function getEvents(fromStr?: string, toStr?: string): Promise<NetworkEvent[] | undefined> {
+function getEvents(fromStr?: string, toStr?: string): NetworkEvent[] | undefined {
     if (fromStr != null && toStr == null) return;
 
     if (toStr != null) {
-        const dbRes: NetworkEvent[] = await db.all(
+        const stmt = db.prepare(
             `
-        SELECT
-             id,
-             title,
-             start,
-             microlax
-        FROM
-            events
-        WHERE
-            unixepoch(?) < unixepoch(start)
-          AND
-            unixepoch(?) > unixepoch(start)`,
-            fromStr, toStr
+            SELECT
+                 id,
+                 title,
+                 start,
+                 microlax
+            FROM
+                events
+            WHERE
+                unixepoch(?) < unixepoch(start)
+              AND
+                unixepoch(?) > unixepoch(start)`
         );
+
+        const dbRes: NetworkEvent[] = stmt.all(fromStr, toStr) as NetworkEvent[];
 
         console.log("DB Res (constrained):", dbRes);
 
         return dbRes;
     }
 
-    const dbRes: NetworkEvent[] = await db.all(
+    const stmt = db.prepare(
         `
-            SELECT
-                id,
-                title,
-                start,
-                microlax
-            FROM
-                events;
-            `
-    )
+        SELECT
+            id,
+            title,
+            start,
+            microlax
+        FROM events
+        `
+    );
+
+    const dbRes: NetworkEvent[] = stmt.all() as NetworkEvent[];
 
     console.log("DB Res (unconstrained):", dbRes);
 
     return dbRes;
 }
 
-app.get("/kackevent", async (req: Request, res: Response) => {
+app.get("/kackevent", (req: Request, res: Response) => {
     const startStr = req.query.start;
     const endStr = req.query.end;
 
@@ -167,10 +169,9 @@ app.get("/kackevent", async (req: Request, res: Response) => {
         return;
     }
 
-    const dbRes = await getEvents(cleanStart, cleanEnd);
+    const dbRes = getEvents(cleanStart, cleanEnd);
 
     if (dbRes === undefined) return res.status(500).json({ error: '?', start: startStr, end: endStr });
-
 
     res.json({
         "events": dbRes
@@ -178,14 +179,19 @@ app.get("/kackevent", async (req: Request, res: Response) => {
 });
 
 app.get("/kackevent/dump", async (req: Request, res: Response) => {
-    const dbRes = await getEvents();
+    const dbRes = getEvents();
     if (dbRes === undefined) return res.sendStatus(500);
     return res.json({
         'events': dbRes
     })
 })
 
-app.delete("/kackevent", async (req: Request, res: Response) => {
+function doesDateExist(dateStr: string) {
+    const stmt = db.prepare("SELECT id FROM events WHERE unixepoch(start) == unixepoch(?)")
+    return stmt.get(dateStr) !== undefined;
+}
+
+app.delete("/kackevent", (req: Request, res: Response) => {
     const dateQuery = req.query.date;
 
     const dateStr = typeof dateQuery === 'string' ? dateQuery.substring(0, 10) : "";
@@ -194,20 +200,22 @@ app.delete("/kackevent", async (req: Request, res: Response) => {
         res.status(400).json({ error: "Invalid date format", date: dateQuery });
     }
 
-    const dateExists: boolean = (
-        (await db.get("SELECT * FROM events WHERE unixepoch(start) == unixepoch(?)", dateStr))
-        !== undefined
-    );
+    const dateExists: boolean = doesDateExist(dateStr);
 
     if (!dateExists) {
         res.status(404).send();
         return;
     }
 
-    const dbRes = await db.run(
+    const deleteStmt = db.prepare(
+        "DELETE FROM events WHERE unixepoch(start) == unixepoch(?)"
+    );
+
+    const dbRes = deleteStmt.run(
         "DELETE FROM events WHERE unixepoch(start) == unixepoch(?)",
         dateStr
-    )
+    );
+
     if (dbRes.changes && dbRes.changes == 1) {
         res.status(200).send();
     } else {
