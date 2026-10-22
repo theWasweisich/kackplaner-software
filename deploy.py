@@ -111,6 +111,14 @@ def deploy_backend():
     run_cmd(['npm', 'install'], cwd=backend_dest, run_as=APP_USER)
     run_cmd(['npx', 'tsc'], cwd=backend_dest, run_as=APP_USER)
 
+def deploy_external():
+    deploy_print("Deploying External...")
+    backend_dest = BASE_DEST / 'external'
+    
+    sync_folder(REPO_DIR / 'external', backend_dest, exclude="node_modules")
+    run_cmd(['npm', 'install'], cwd=backend_dest, run_as=APP_USER)
+    run_cmd(['npx', 'tsc'], cwd=backend_dest, run_as=APP_USER)
+
 def deploy_notifier():
     deploy_print("Deploying Notifier...")
     notifier_dest = BASE_DEST / 'notifier'
@@ -151,7 +159,8 @@ def main():
     try:
         manage_services('stop')
         setup_data_directory()
-        
+
+        deploy_external()        
         deploy_backend()
         deploy_notifier()
         deploy_frontend()
