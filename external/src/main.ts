@@ -17,6 +17,8 @@ const EXTERNAL_PORT = parseInt(process.env.EXTERNAL_PORT as string) || 8090;
 const EXTERNAL_INTERFACE = "[::]";
 const DB_PATH = process.env.DB_PATH || "database.db";
 
+console.log(`Setting up database at ${DB_PATH}`)
+
 const db = new Database(DB_PATH);
 db.pragma("journal_mode = WAL");
 db.pragma("busy_timeout = 5000");
