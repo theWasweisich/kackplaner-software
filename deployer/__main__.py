@@ -4,16 +4,16 @@ import sys
 import subprocess
 
 # Configuration
-from config import REPO_DIR, BASE_DEST, MASTER_ENV, APP_USER
+from .config import REPO_DIR, BASE_DEST, MASTER_ENV, APP_USER
 
 # Core Engine
-from core.ui import UIHandler
-from core.executor import Executor, DeployError
-from core.git_tracker import GitTracker
+from .core.ui import UIHandler
+from .core.executor import Executor, DeployError
+from .core.git_tracker import GitTracker
 
 # Domain Managers
-from discovery.scanner import Scanner
-from systemd.manager import SystemdManager
+from .discovery.scanner import Scanner
+from .systemd.manager import SystemdManager
 
 
 def verify_prerequisites(ui: UIHandler):
