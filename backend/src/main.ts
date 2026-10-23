@@ -1,4 +1,4 @@
-import express, {type Request, type Response} from 'express';
+import express, {type Request, type Response, type NextFunction} from 'express';
 import Database from 'better-sqlite3';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -34,7 +34,10 @@ db.pragma("busy_timeout = 5000");
 const app = express();
 
 app.use(cors({
-    // origin: `http://127.0.0.1:${FRONTEND_PORT}`
+    origin: [
+        '*',
+        `http://127.0.0.1:${FRONTEND_PORT}`
+    ]
 }));
 
 const createTableSQLString = `
@@ -59,8 +62,43 @@ interface NetworkEvent {
     microlax?: boolean;
 }
 
+interface DatabaseEvent {
+    id?: number;
+    title: string;
+    start: string;
+    microlax: number;
+}
+
 interface KackeventPutBody {
     events: NetworkEvent[]
+}
+
+function asTransaction(func: (...args: any[]) => void): () => boolean {
+    const begin = db.prepare("BEGIN");
+    const commit = db.prepare("COMMIT");
+    const rollback = db.prepare("ROLLBACK");
+
+    return function (...args: any[]) {
+        begin.run();
+        try {
+            func(...args);
+            commit.run();
+            return true;
+        } catch (e: any) {
+            if (e instanceof Error) {
+                console.error("Error Type: ", e.name);
+                console.error("Error Message: ", e.message);
+            } else {
+                console.error("Unknown error type: ", e);
+            }
+            return false;
+        }
+        finally {
+            if (db.inTransaction) {
+                rollback.run();
+            }
+        }
+    }
 }
 
 function isValidDateString(dateString: string): boolean {
@@ -76,45 +114,127 @@ function isValidDateString(dateString: string): boolean {
 
 app.use(express.json());
 
-app.put("/kackevent", async (req: Request, res: Response) => {
-    const putBody = req.body as KackeventPutBody;
+function networkToDbEvents(events: NetworkEvent[]): DatabaseEvent[] {
+    const dbEvents: DatabaseEvent[] = [];
 
-    for (const event of putBody.events) {
+    for (const event of events) {
+        let eventId: number | undefined = parseInt(event.id ? event.id : "");
+        if (!eventId) {
+            eventId = undefined;
+        }
+        dbEvents.push({
+            id: eventId,
+            start: event.start,
+            title: event.title,
+            microlax: event.microlax ? 1 : 0,
+        });
+    }
+    return dbEvents;
+}
 
-        if (!isValidDateString(event.start)) {
-            res.status(400).json({ error: "Invalid date format", date: event.start });
-            return;
+function dbEventsToNetwork(events: DatabaseEvent[]): NetworkEvent[] {
+    const networkEvents: NetworkEvent[] = [];
+
+    for (const event of events) {
+        networkEvents.push({
+            id: String(event.id),
+            title: event.title,
+            start: event.start,
+            microlax: event.microlax == 1
+        });
+    }
+
+    return networkEvents;
+}
+
+function insertEvents(events: NetworkEvent[]) {
+    const dbEvents: DatabaseEvent[] = networkToDbEvents(events);
+
+    const insertStmt = db.prepare("INSERT INTO events (id, title, start, microlax) VALUES (?, ?, ?, ?)");
+
+    const insertEvents: (events: DatabaseEvent[]) => boolean = asTransaction((events: DatabaseEvent[]) => {
+        const eventsSet = new Set(events);
+        for (const event of eventsSet) {
+            console.log("Inserting event:", event);
+            insertStmt.run(
+                event.id,
+                event.title,
+                event.start,
+                event.microlax
+            );
+        }
+    })
+    return insertEvents(dbEvents);
+}
+
+type EventsValidationFailures = 'title' | 'date' | 'id';
+type EventsValidationResult = EventsValidationFailures | 'success';
+
+function validateEvents(events: NetworkEvent[]): EventsValidationResult {
+    for (const event of events) {
+        const id: string | undefined = event.id;
+        const startDate: string = event.start;
+        const title: string = event.title;
+
+        if (!isValidDateString(startDate)) {
+            return "date";
+        }
+        if (!title.isWellFormed() || title.trim().length != title.length) {
+            return "title";
+        }
+        if (id && isNaN(parseInt(id, 10))) {
+            return "id";
         }
     }
+    return "success";
+}
 
+app.put("/kackevent", (req: Request, res: Response) => {
+    const putBody = req.body as KackeventPutBody;
 
-    const stmt = db.prepare(
-        "INSERT INTO events (id, title, start, microlax) VALUES (?, ?, ?, ?)"
-    );
-
-    for (const event of putBody.events) {
-        event.microlax = !!event.microlax;
-        stmt.run(
-            event.id,
-            event.title,
-            event.start,
-            event.microlax
-        );
+    if (!("events" in putBody)) {
+        return res.status(401).json({
+            error: "Invalid payload. Expected events array"
+        });
     }
 
-    console.log("Inserted events:", putBody.events);
+    if (!Array.isArray(putBody.events)) {
+        return res.status(401).json({
+            error: "Invalid payload. Malformed events property"
+        });
+    }
 
-    res.status(201).json({
+    const validationResult = validateEvents(putBody.events);
+    if (validationResult !== "success") {
+        if (validationResult === "date")
+            return res.status(401).json({ error: "Invalid Date format", events: putBody.events });
+        if (validationResult === "title")
+            return res.status(401).json({ error: "Invalid title", events: putBody.events });
+        if (validationResult === "id")
+            return res.status(401).json({ error: "Invalid Id", events: putBody.events });
+        return res.sendStatus(500);
+    }
+
+    const eventsToBeInserted = ([...putBody.events]);
+
+    const success = insertEvents(eventsToBeInserted);
+
+    if (success) {
+        return res.status(201).json({
+            "events": eventsToBeInserted
+        });
+    } else {
+        console.error("There was an error while inserting events. Rollback occurred");
+    }
+
+    return res.status(400).json({
         "events": putBody.events
-    });
+    })
 });
 
-function getEvents(fromStr?: string, toStr?: string): NetworkEvent[] | undefined {
-    if (fromStr != null && toStr == null) return;
-
-    if (toStr != null) {
-        const stmt = db.prepare(
-            `
+function getConstrainedEvents(fromStr: string, toStr: string): DatabaseEvent[] | undefined {
+    const stmt = db.prepare(
+        `
             SELECT
                  id,
                  title,
@@ -126,39 +246,62 @@ function getEvents(fromStr?: string, toStr?: string): NetworkEvent[] | undefined
                 unixepoch(?) < unixepoch(start)
               AND
                 unixepoch(?) > unixepoch(start)`
-        );
-
-        const dbRes: NetworkEvent[] = stmt.all(fromStr, toStr) as NetworkEvent[];
-
-        console.log("DB Res (constrained):", dbRes);
-
-        return dbRes;
-    }
-
-    const stmt = db.prepare(
-        `
-        SELECT
-            id,
-            title,
-            start,
-            microlax
-        FROM events
-        `
     );
 
-    const dbRes: NetworkEvent[] = stmt.all() as NetworkEvent[];
+    const dbRes = stmt.all(fromStr, toStr) as DatabaseEvent[];
+
+    console.log("DB Res (constrained):", dbRes);
+
+    return dbRes;
+}
+
+function getUnconstrainedEvents(): DatabaseEvent[] {
+    const stmt = db.prepare("SELECT id, title, start, microlax FROM events");
+
+    const dbRes = stmt.all() as DatabaseEvent[];
 
     console.log("DB Res (unconstrained):", dbRes);
 
     return dbRes;
 }
 
+function getEvents(fromStr?: string, toStr?: string): NetworkEvent[] | undefined {
+    if (fromStr != undefined && toStr == undefined) return;
+
+    if (fromStr !== undefined && toStr !== undefined) {
+        const dbEvents = getConstrainedEvents(fromStr, toStr);
+        if (dbEvents === undefined) {
+            return undefined;
+        }
+        return dbEventsToNetwork(dbEvents);
+    }
+
+    const dbRes: DatabaseEvent[] = getUnconstrainedEvents() as DatabaseEvent[];
+
+    return dbEventsToNetwork(dbRes);
+}
+
+function cleanDateStringInput(input: string): string {
+    if (typeof input !== "string") return "";
+    return input.substring(0, 10);
+}
+
 app.get("/kackevent", (req: Request, res: Response) => {
     const startStr = req.query.start;
     const endStr = req.query.end;
 
-    const cleanStart = typeof startStr === "string" ? startStr.substring(0, 10) : "";
-    const cleanEnd = typeof endStr === "string" ? endStr.substring(0, 10) : "";
+    if (startStr === undefined || endStr === undefined) {
+        return res.status(401).json({
+            error: "Expected two query parameters: start and end"
+        });
+    }
+
+    if (typeof startStr !== "string" || typeof endStr !== "string") {
+        return res.sendStatus(500);
+    }
+
+    const cleanStart = cleanDateStringInput(startStr);
+    const cleanEnd = cleanDateStringInput(endStr);
 
     if (!isValidDateString(cleanStart) || !isValidDateString(cleanEnd)) {
         res.status(400).json({ error: "Invalid date format", start: startStr, end: endStr });
@@ -279,6 +422,12 @@ app.post("/display/brightness", (req, res) => {
         return res.sendStatus(503);
     }
 });
+
+app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
+    console.error("Unhandled Error:", err);
+    res.status(500);
+    res.send();
+})
 
 app.listen(BACKEND_PORT, () => {
     // noinspection HttpUrlsUsage
