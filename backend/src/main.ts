@@ -33,11 +33,21 @@ db.pragma("busy_timeout = 5000");
 
 const app = express();
 
+const allowedOrigins = [
+    `http://localhost:${FRONTEND_PORT}`,
+    `http://127.0.0.1:${FRONTEND_PORT}`,
+]
+
 app.use(cors({
-    origin: [
-        '*',
-        `http://127.0.0.1:${FRONTEND_PORT}`
-    ]
+    origin: (origin, callback) => {
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            callback(new Error(`"${origin}" Not allowed by CORS`))
+        }
+    },
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    allowedHeaders: ['Content-Type', 'x-client-id', 'x-timestamp', 'x-signature']
 }));
 
 const createTableSQLString = `
