@@ -1,5 +1,5 @@
 import {useRef, useState} from "react";
-import {type CalendarEvent, createEvents, deleteEvent, fetchEvents, type NetworkEvent} from "./api.ts";
+import {type CalendarEvent, createEvents, deleteEvent, fetchEvents, type NetworkEvent} from "./api/api.ts";
 import {useConfirm} from "./MicrolaxConfirmProvider.tsx";
 import FullCalendar, {type DateClickInfo, type DatesSetInfo} from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/react/daygrid";

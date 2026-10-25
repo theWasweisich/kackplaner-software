@@ -1,5 +1,5 @@
 import {useConfirm} from "./MicrolaxConfirmProvider.tsx";
-import {rebootKiosk, setScreenBrightness, shutdownKiosk} from "./api.ts";
+import {rebootKiosk, setScreenBrightness, shutdownKiosk} from "./api/api.ts";
 import './ControlButtons.css';
 import {useState} from "react";
 
@@ -45,6 +45,10 @@ export default function ControlButtons({ onBeforeShutdown }: ControlButtonsProps
         }
     }
 
+    const reloadPage = () => {
+        window.location.reload();
+    }
+
     const triggerSetBrightness = async (brightness: number) => {
         brightness = parseInt(brightness.toString());
         await setScreenBrightness(brightness);
@@ -66,6 +70,7 @@ export default function ControlButtons({ onBeforeShutdown }: ControlButtonsProps
                 <button className="shutdown-button" onClick={triggerShutdown}>Shutdown</button>
                 <button className="restart-button" onClick={triggerRestart}>Restart</button>
                 <button className="sleep-screen-button" onClick={sleepScreen}>Sleep</button>
+                <button className="reload-button" onClick={reloadPage}>Reload Page</button>
 
                 <button className="brightness-dim-button" onClick={() => triggerSetBrightness(25)} >Dim</button>
                 <button className="brightness-bright-button" onClick={() => triggerSetBrightness(255)} >Bright</button>

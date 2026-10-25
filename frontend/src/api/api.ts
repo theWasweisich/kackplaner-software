@@ -15,7 +15,9 @@ export interface CalendarEvent {
   color?: string;
 }
 
-const baseUrl: string = `http://localhost:${import.meta.env.VITE_BACKEND_PORT || 8090}`;
+
+const backendPort: number = import.meta.env.VITE_BACKEND_PORT || 8090;
+const baseUrl: string = `http://localhost:${backendPort}`;
 
 export async function fetchEvents(startStr: string, endStr: string): Promise<NetworkEvent[]> {
   let events: NetworkEvent[] = [];
