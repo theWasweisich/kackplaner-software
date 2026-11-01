@@ -18,7 +18,7 @@ def escape_markdown_v2(text: str) -> str:
 def print_missing_config(config: str):
     print(f"Missing configuration in environment variables: {config}")
 
-def send_webhook_message(message: str) -> WebhookResult:
+def send_webhook_request(endpoint: str, payload: bytes) -> WebhookResult:
     webhook_url = os.environ.get("WEBHOOK_URL")
     webhook_token = os.environ.get("TELEGRAM_TOKEN")
     chat_id = os.environ.get("CHAT_ID")
@@ -35,14 +35,8 @@ def send_webhook_message(message: str) -> WebhookResult:
         print_missing_config("chat_id")
         return WebhookResult.CONFIG_MISSING
 
-    payload = json.dumps({
-        "chat_id": chat_id,
-        "parse_mode": "MarkdownV2",
-        "text": message
-    }).encode("utf-8")
-
     req = urllib.request.Request(
-        url=webhook_url + webhook_token + "/sendMessage",
+        url=webhook_url + webhook_token + endpoint,
         data=payload,
         headers={
             "Content-Type": "application/json",
@@ -61,3 +55,32 @@ def send_webhook_message(message: str) -> WebhookResult:
     except Exception as e:
         print(f"Network Error: {e}")
     return WebhookResult.ERROR
+
+def send_webhook_message(message: str) -> WebhookResult:
+    webhook_url = os.environ.get("WEBHOOK_URL")
+    webhook_token = os.environ.get("TELEGRAM_TOKEN")
+    chat_id = os.environ.get("CHAT_ID")
+
+    if webhook_url is None:
+        print_missing_config("webhook_url")
+        return WebhookResult.CONFIG_MISSING
+
+    if webhook_token is None:
+        print_missing_config("webhook_token")
+        return WebhookResult.CONFIG_MISSING
+
+    if chat_id is None:
+        print_missing_config("chat_id")
+        return WebhookResult.CONFIG_MISSING
+
+    payload: bytes = json.dumps({
+        "chat_id": chat_id,
+        "parse_mode": "MarkdownV2",
+        "text": message
+    }).encode("utf-8")
+
+    return send_webhook_request("/sendMessage", payload)
+
+
+def get_webhook_updates():
+    pass
