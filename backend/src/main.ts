@@ -352,18 +352,15 @@ app.delete("/kackevent", (req: Request, res: Response) => {
     const dateExists: boolean = doesDateExist(dateStr);
 
     if (!dateExists) {
-        res.status(404).send();
+        res.status(404).json({ error: "This date does not exist!", date: dateQuery });
         return;
     }
 
     const deleteStmt = db.prepare(
-        "DELETE FROM events WHERE unixepoch(start) == unixepoch(?)"
+        "DELETE FROM events WHERE unixepoch(start) == unixepoch(?)",
     );
 
-    const dbRes = deleteStmt.run(
-        "DELETE FROM events WHERE unixepoch(start) == unixepoch(?)",
-        dateStr
-    );
+    const dbRes = deleteStmt.run(dateStr);
 
     if (dbRes.changes && dbRes.changes == 1) {
         res.status(200).send();
