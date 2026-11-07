@@ -153,7 +153,9 @@ def deploy_notifier():
     notifier_dest = BASE_DEST / 'notifier'
     
     sync_folder(REPO_DIR / 'notifier', notifier_dest)
-    
+
+    run_cmd(["python", "-m", "venv", ".venv"], cwd=notifier_dest)
+
     alert_script = notifier_dest / 'notify.py'
     if alert_script.exists():
         run_cmd(["chmod", "+x", str(alert_script)])
