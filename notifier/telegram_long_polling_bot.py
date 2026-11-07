@@ -4,7 +4,11 @@ import datetime
 from telebot.async_telebot import AsyncTeleBot
 from middlewares.chat_id_middleware import RestrictChatMiddleware
 from telebot.types import (
-    BotCommand
+    Message,
+    BotCommand,
+    CallbackQuery,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton
 )
 import telebot.types
 import logging
@@ -74,8 +78,9 @@ if ConfigVariables.CHAT_ID is None:
 if ConfigVariables.DB_PATH is None:
     raise IncompleteConfiguration()
 
-CMD_LAST_EVENT = BotCommand("lastevent", "See how many days passed since the last event", is_ephemeral=True)
+CMD_LAST_EVENT = BotCommand("lastevent", "See how many days passed since the last event")
 CMD_STATUS = BotCommand("status", "Check the system status")
+CMD_STATUS_MENU = BotCommand("menu", "Show a menu")
 
 bot = AsyncTeleBot(ConfigVariables.TELEGRAM_TOKEN)
 
@@ -84,45 +89,50 @@ bot.setup_middleware(RestrictChatMiddleware(allowed_ids=[
     *ConfigVariables.ALLOWED_CHAT_IDS
 ]))
 
-
-@bot.message_handler(commands=[CMD_LAST_EVENT.command])
-async def send_last_schiss(message: telebot.types.Message):
-    parameters = telebot.types.EphemeralMessageParameters(
-        receiver_user_id=message.chat.id
-    )
-
+def get_last_schiss_message() -> str:
     days_since_last_event = notify.get_days_since_last_event(ConfigVariables.DB_PATH)
 
     if days_since_last_event is None:
-        await bot.send_message(message.chat.id, "_Failed to get last date_", parse_mode="MarkdownV2")
-        return
+        return "_Failed to get last date_"
 
     assert isinstance(days_since_last_event, int)
 
-    message_to_send = f"Last event was {days_since_last_event} days ago"
+    return f"Last event was *{days_since_last_event}* days ago"
 
-    await bot.send_message(message.chat.id, message_to_send, ephemeral_message_parameters=parameters)
+@bot.message_handler(commands=[CMD_LAST_EVENT.command])
+async def send_last_schiss(message: telebot.types.Message):
+    message_to_send = get_last_schiss_message()
+    await bot.send_message(message.chat.id, message_to_send, parse_mode="MarkdownV2")
 
-async def check_last_schiss():
-    while True:
-        now = datetime.datetime.now()
-        target = now.replace(hour=9, minute=0, second=0, microsecond=0)
+@bot.message_handler(commands=[CMD_STATUS_MENU.command])
+async def show_menu(message: Message):
+    markup = InlineKeyboardMarkup()
 
-        if now >= target:
-            target += datetime.timedelta(days=1)
+    markup.add(InlineKeyboardButton(text="Last Event", callback_data="cmd_lastevent"))
+    markup.add(InlineKeyboardButton(text="Status", callback_data="cmd_status"))
 
-        wait_seconds = (target - now).total_seconds()
+    await bot.send_message(message.chat.id, "Select an option", reply_markup=markup)
 
-        await asyncio.sleep(wait_seconds)
+@bot.callback_query_handler(func=lambda call: True)
+async def handle_buttons(call: CallbackQuery):
+    response_text = "Unknown command"
 
-        days_since_events: int | None = notify.get_days_since_last_event(ConfigVariables.DB_PATH)
-        if days_since_events is None:
-            break
+    if call.data == "cmd_lastevent":
+        response_text = get_last_schiss_message()
+    elif call.data == "cmd_status":
+        response_text = "Status"
+
+    await bot.answer_callback_query(
+        callback_query_id=call.id,
+        text=response_text,
+        show_alert=True
+    )
 
 async def set_commands_list():
     all_commands = [
         CMD_LAST_EVENT,
-        CMD_STATUS
+        CMD_STATUS,
+        CMD_STATUS_MENU
     ]
 
     await bot.set_my_commands(
