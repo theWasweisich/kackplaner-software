@@ -1,5 +1,6 @@
 # https://github.com/eternnoir/pyTelegramBotAPI
 import datetime
+import subprocess
 
 from auto_dismiss_async_bot import AutoDismissAsyncTeleBot
 from middlewares.chat_id_middleware import RestrictChatMiddleware
@@ -104,6 +105,32 @@ def get_last_schiss_message() -> str:
 
     return f"Last event was *{days_since_last_event}* days ago"
 
+def millidegrees_to_degrees(milli_degrees: float) -> float:
+    return milli_degrees / 1_000
+
+def get_temp():
+    try:
+        output = subprocess.check_output(["cat", "/sys/class/thermal/thermal_zone0/temp"], encoding="utf-8")
+        milli_degrees = float(output)
+        return millidegrees_to_degrees(milli_degrees)
+    except subprocess.CalledProcessError as e:
+        logging.error(e)
+        return -1
+
+def get_uptime() -> str:
+    try:
+        output = subprocess.check_output(["uptime", "--pretty"], encoding="utf-8")
+        return output
+    except subprocess.CalledProcessError as e:
+        logging.error(e)
+        return ""
+
+def build_status_message() -> str:
+    message = "Status\\!"
+    message += f"\nTemperature: *{get_temp()}*"
+    message += f"\nUptime: *{get_uptime()}*"
+    return message
+
 @bot.message_handler(commands=[CMD_LAST_EVENT.command])
 async def send_last_schiss(message: telebot.types.Message):
     message_to_send = get_last_schiss_message()
@@ -111,7 +138,7 @@ async def send_last_schiss(message: telebot.types.Message):
 
 @bot.message_handler(commands=[CMD_STATUS.command])
 async def send_status(message: Message):
-    message_to_send = "Status\\!"
+    message_to_send = build_status_message()
     await bot.send_message(message.chat.id, message_to_send, parse_mode="MarkdownV2")
 
 def is_dismiss_call(call: CallbackQuery) -> bool:
