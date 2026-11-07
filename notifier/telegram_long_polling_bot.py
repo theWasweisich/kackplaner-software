@@ -114,13 +114,18 @@ async def send_status(message: Message):
     message_to_send = "Status\\!"
     await bot.send_message(message.chat.id, message_to_send, parse_mode="MarkdownV2")
 
-@bot.callback_query_handler(func=lambda call: call.data == "dismiss_msg")
+def is_dismiss_call(call: CallbackQuery) -> bool:
+    return call.data.startswith("dismiss_msg:") if isinstance(call.data, str) else False
+
+@bot.callback_query_handler(func=is_dismiss_call)
 async def dismiss_handler(call: CallbackQuery):
     try:
         await bot.delete_message(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id
         )
+
+        _, cmd_msg_id = call.data.split(":")
     except Exception as e:
         logging.error(f"Failed to dismiss message: {e}")
     finally:

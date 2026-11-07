@@ -8,9 +8,12 @@ from telebot.types import (
     CallbackQuery
 )
 
-def get_dismiss_keyboard():
+def get_dismiss_keyboard(cmd_msg_id: Optional[int] = None):
+    callback_data = "dismiss_msg:"
+    if cmd_msg_id:
+        callback_data += str(cmd_msg_id)
     markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton("Dismiss", callback_data="dismiss_msg"))
+    markup.add(InlineKeyboardButton("Dismiss", callback_data=callback_data))
     return markup
 
 class AutoDismissAsyncTeleBot(AsyncTeleBot):
@@ -35,14 +38,19 @@ class AutoDismissAsyncTeleBot(AsyncTeleBot):
             suggested_post_parameters: Optional[types.SuggestedPostParameters]=None,
             receiver_user_id: Optional[int]=None,          # deprecated, for backward compatibility
             callback_query_id: Optional[str]=None,        # deprecated, for backward compatibility
-            ephemeral_message_parameters: Optional[types.EphemeralMessageParameters]=None) -> types.Message:
+            ephemeral_message_parameters: Optional[types.EphemeralMessageParameters]=None,
+            command_message_id: Optional[int] = None,
+    ) -> types.Message:
+
+        cmd_msg_id = command_message_id
+
         if reply_markup is None:
-            reply_markup = get_dismiss_keyboard()
+            reply_markup = get_dismiss_keyboard(cmd_msg_id)
 
         return await super().send_message(chat_id, text, parse_mode, entities, disable_web_page_preview, disable_notification, protect_content, reply_to_message_id, allow_sending_without_reply, reply_markup, timeout, message_thread_id, reply_parameters, link_preview_options, business_connection_id, message_effect_id, allow_paid_broadcast, direct_messages_topic_id, suggested_post_parameters, receiver_user_id, callback_query_id, ephemeral_message_parameters)
 
     async def reply_to(self, message: types.Message, text: str, **kwargs) -> types.Message:
         if kwargs.get("reply_markup") is None:
-            kwargs["reply_markup"] = get_dismiss_keyboard()
+            kwargs["reply_markup"] = get_dismiss_keyboard(kwargs.pop("command_message_id", None))
 
         return await super().reply_to(message, text, **kwargs)
