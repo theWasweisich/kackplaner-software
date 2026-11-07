@@ -158,7 +158,7 @@ def main():
     verify_prerequisites()
     
     try:
-        run_cmd([".", f"/home/{APP_USER}/.nvm/nvm.sh"])
+        run_cmd(["source", f"/home/{APP_USER}/.nvm/nvm.sh"], run_as=APP_USER)
         manage_services('stop')
         setup_data_directory()
 
