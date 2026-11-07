@@ -80,7 +80,15 @@ bot.setup_middleware(RestrictChatMiddleware(allowed_ids=[
 
 @bot.message_handler(commands=["lastevent"])
 async def send_last_schiss(message: telebot.types.Message):
-    await bot.send_message(message.chat.id, "Last Event was 99 days ago")
+    days_since_last_event = notify.get_days_since_last_event(ConfigVariables.DB_PATH)
+
+    if days_since_last_event is None:
+        await bot.send_message(message.chat.id, "_Failed to get last date_", parse_mode="MarkdownV2")
+        return
+
+    assert isinstance(days_since_last_event, int)
+
+    await bot.send_message(message.chat.id, f"Last Event was {days_since_last_event} days ago")
 
 async def check_last_schiss():
     while True:
