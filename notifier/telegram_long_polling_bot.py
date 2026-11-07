@@ -95,6 +95,11 @@ bot.setup_middleware(RestrictChatMiddleware(allowed_ids=[
     *ConfigVariables.ALLOWED_CHAT_IDS
 ]))
 
+def escape_markdown_v2(text: str) -> str:
+    """Escapes strings for Telegram's strict MarkdownV2 formatting."""
+    return re.sub(r'([_*\[\]()~`>#+\-=|{}.!])', r'\\\1', str(text))
+
+
 def get_last_schiss_message() -> str:
     days_since_last_event = notify.get_days_since_last_event(ConfigVariables.DB_PATH)
 
@@ -116,6 +121,9 @@ def get_temp():
     except subprocess.CalledProcessError as e:
         logging.error(e)
         return -1
+    except Exception as e:
+        logging.error(e)
+        return -1
 
 def get_uptime() -> str:
     try:
@@ -124,11 +132,16 @@ def get_uptime() -> str:
     except subprocess.CalledProcessError as e:
         logging.error(e)
         return ""
+    except Exception as e:
+        logging.error(e)
+        return ""
 
 def build_status_message() -> str:
-    message = "Status\\!"
-    message += f"\nTemperature: *{get_temp()}*"
-    message += f"\nUptime: *{get_uptime()}*"
+    logging.info("Building status message")
+    message = "**Status\\!**"
+    message += f"\nTemperature: *{escape_markdown_v2(str(get_temp()))}°C*"
+    message += f"\nUptime: *{escape_markdown_v2(get_uptime())}*"
+    logging.info("Done building status message")
     return message
 
 @bot.message_handler(commands=[CMD_LAST_EVENT.command])
@@ -138,8 +151,9 @@ async def send_last_schiss(message: telebot.types.Message):
 
 @bot.message_handler(commands=[CMD_STATUS.command])
 async def send_status(message: Message):
+    logging.info("Handling status command")
     message_to_send = build_status_message()
-    logging.info("Status message: {}", message_to_send)
+    logging.error("Status message: {}", message_to_send)
     await bot.send_message(message.chat.id, message_to_send, parse_mode="MarkdownV2")
 
 def is_dismiss_call(call: CallbackQuery) -> bool:
@@ -174,4 +188,5 @@ async def main():
     await bot.polling(non_stop=True)
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG)
     asyncio.run(main())
