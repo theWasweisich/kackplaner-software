@@ -12,6 +12,7 @@ from telebot.types import (
     InlineKeyboardButton
 )
 from dataclasses import dataclass
+from service_status import ServiceStatus, check_service_status
 import telebot.types
 import logging
 import asyncio
@@ -87,6 +88,7 @@ if ConfigVariables.DB_PATH is None:
 
 CMD_LAST_EVENT = BotCommand("lastevent", "See how many days passed since the last event")
 CMD_STATUS = BotCommand("status", "Check the system status")
+CMD_SERVICES = BotCommand("services", "Check the status of systemd units")
 
 bot = AutoDismissAsyncTeleBot(ConfigVariables.TELEGRAM_TOKEN)
 
@@ -137,11 +139,9 @@ def get_uptime() -> str:
         return ""
 
 def build_status_message() -> str:
-    logging.info("Building status message")
     message = "**Status\\!**"
     message += f"\nTemperature: *{escape_markdown_v2(str(get_temp()))}°C*"
     message += f"\nUptime: *{escape_markdown_v2(get_uptime())}*"
-    logging.info("Done building status message")
     return message
 
 @bot.message_handler(commands=[CMD_LAST_EVENT.command])
@@ -151,10 +151,50 @@ async def send_last_schiss(message: telebot.types.Message):
 
 @bot.message_handler(commands=[CMD_STATUS.command])
 async def send_status(message: Message):
-    logging.info("Handling status command")
     message_to_send = build_status_message()
-    logging.error("Status message: %s", message_to_send)
     await bot.send_message(message.chat.id, message_to_send, parse_mode="MarkdownV2")
+
+def build_service_report_line(service_name: str) -> str:
+    status = check_service_status(service_name)
+    marker = "⚪"
+    status_msg = "unknown"
+
+    match status:
+        case ServiceStatus.ACTIVE:
+            marker = "🟢"
+            status_msg = "active"
+        case ServiceStatus.INACTIVE:
+            marker = "🟠"
+            status_msg = "inactive"
+        case ServiceStatus.FAILED:
+            marker = "🔴"
+            status_msg = "failed"
+        case ServiceStatus.REFRESHING | ServiceStatus.RELOADING | ServiceStatus.ACTIVATING | ServiceStatus.DEACTIVATING:
+            marker = "🟢🟠🔴"
+            status_msg = "Schrödinger's cat"
+        case ServiceStatus.UNKNOWN:
+            marker = "🟣"
+            status_msg = "unknown"
+
+    return f"{marker} {service_name} is: {status_msg}"
+
+@bot.message_handler(commands=[CMD_SERVICES.command])
+async def send_service_status(message: Message):
+    services_to_check = [
+        "kackplaner-kiosk-supervisor.service",
+        "kackplaner-frontend.service",
+        "kackplaner-external.service",
+        "kackplaner-backend.service",
+    ]
+
+    report_lines = [build_service_report_line(service) for service in services_to_check]
+    final_report = "\n".join(report_lines)
+
+    await bot.send_message(
+        message.chat.id,
+        f"*Systemd Service Status Report*\n\n{final_report}",
+        parse_mode="MarkdownV2"
+    )
 
 def is_dismiss_call(call: CallbackQuery) -> bool:
     return call.data == "dismiss_msg"
