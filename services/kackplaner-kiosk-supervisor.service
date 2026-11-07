@@ -1,0 +1,17 @@
+[Unit]
+Description=Kiosk Supervisor
+After=network.target graphical.target
+
+[Service]
+Type=simple
+User=kiosk
+
+ExecStartPre=/bin/sh -c 'until pgrep -x labwc > /dev/null; do sleep 2; done'
+
+ExecStart=/usr/bin/python3 /usr/local/bin/kiosk-scripts/kiosk-supervisor.py
+
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -3,6 +3,9 @@ import datetime
 
 from telebot.async_telebot import AsyncTeleBot
 from middlewares.chat_id_middleware import RestrictChatMiddleware
+from telebot.types import (
+    BotCommand
+)
 import telebot.types
 import logging
 import asyncio
@@ -71,6 +74,9 @@ if ConfigVariables.CHAT_ID is None:
 if ConfigVariables.DB_PATH is None:
     raise IncompleteConfiguration()
 
+CMD_LAST_EVENT = BotCommand("lastevent", "See how many days passed since the last event", is_ephemeral=True)
+CMD_STATUS = BotCommand("status", "Check the system status")
+
 bot = AsyncTeleBot(ConfigVariables.TELEGRAM_TOKEN)
 
 bot.setup_middleware(RestrictChatMiddleware(allowed_ids=[
@@ -78,8 +84,13 @@ bot.setup_middleware(RestrictChatMiddleware(allowed_ids=[
     *ConfigVariables.ALLOWED_CHAT_IDS
 ]))
 
-@bot.message_handler(commands=["lastevent"])
+
+@bot.message_handler(commands=[CMD_LAST_EVENT.command])
 async def send_last_schiss(message: telebot.types.Message):
+    parameters = telebot.types.EphemeralMessageParameters(
+        receiver_user_id=message.chat.id
+    )
+
     days_since_last_event = notify.get_days_since_last_event(ConfigVariables.DB_PATH)
 
     if days_since_last_event is None:
@@ -88,7 +99,9 @@ async def send_last_schiss(message: telebot.types.Message):
 
     assert isinstance(days_since_last_event, int)
 
-    await bot.send_message(message.chat.id, f"Last Event was {days_since_last_event} days ago")
+    message_to_send = f"Last event was {days_since_last_event} days ago"
+
+    await bot.send_message(message.chat.id, message_to_send, ephemeral_message_parameters=parameters)
 
 async def check_last_schiss():
     while True:
@@ -106,11 +119,21 @@ async def check_last_schiss():
         if days_since_events is None:
             break
 
-def main():
-    logging.info("Starting polling bot")
-    asyncio.run(
-        bot.polling(non_stop=True),
+async def set_commands_list():
+    all_commands = [
+        CMD_LAST_EVENT,
+        CMD_STATUS
+    ]
+
+    await bot.set_my_commands(
+        commands=all_commands,
+        scope=telebot.types.BotCommandScopeDefault()
     )
 
+async def main():
+    logging.info("Starting polling bot")
+    await set_commands_list()
+    await bot.polling(non_stop=True)
+
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
