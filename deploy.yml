@@ -1,0 +1,221 @@
+---
+- name: Deploy Kackplaner
+  hosts: kiosk
+  become: yes # Run as root
+
+  vars:
+    app_name: "kackplaner"
+    app_user: "user"
+    base_dest: "/opt/{{ app_name }}"
+    master_env: "/opt/{{ app_name }}.env"
+
+    active_services:
+      - "{{ app_name }}-external.service"
+      - "{{ app_name }}-backend.service"
+      - "{{ app_name }}-frontend.service"
+      - "{{ app_name }}-telegram-bot.service"
+      - "{{ app_name }}-kiosk-supervisor.service"
+      - "{{ app_name }}-alert.timer"
+      - "{{ app_name }}-alert-temp.timer"
+
+    systemd_units: "{{ active_services + [app_name + '-alert.service', app_name + '-alert-temp.service'] }}"
+
+  tasks:
+    - name: Prerequisites and Setup Group
+      block:
+        - name: Verify master config exists
+          stat:
+            path: "{{ master_env }}"
+          register: master_env_stat
+          failed_when: not master_env_stat.stat.exists
+
+        - name: Resolve NVM path for {{ app_user }}
+          shell: "source ~/.nvm/nvm.sh && nvm which current"
+          args:
+            executable: /bin/bash
+          become_user: "{{ app_user }}"
+          register: nvm_which
+          changed_when: false
+
+        - name: Extract NVM binary directory
+          set_fact:
+            nvm_bin_dir: "{{ nvm_which.stdout | dirname }}"
+
+        - name: Stop active services
+          systemd:
+            name: "{{ item }}"
+            state: stopped
+          loop: "{{ active_services }}"
+          ignore_errors: true
+
+        - name: Set up persistent data directory
+          file:
+            path: "{{ base_dest }}/data"
+            state: directory
+            owner: "{{ app_user }}"
+            group: "{{ app_user }}"
+
+    - name: External Deployment Group
+      block:
+        - name: Sync files
+          synchronize:
+            src: "./external/"
+            dest: "{{ base_dest }}/external"
+            delete: yes
+            rsync_opts:
+              - "--exclude=node_modules"
+          register: external_sync
+
+        - name: Install and Build (tsc)
+          when: external_sync.changed
+          shell: "npm install && npx tsc"
+          args:
+            chdir: "{{ base_dest }}/external"
+          environment:
+            PATH: "{{ nvm_bin_dir }}:/usr/bin:/bin"
+          become_user: "{{ app_user }}"
+
+        - name: Fix ownership
+          file:
+            path: "{{ base_dest }}/external"
+            owner: "{{ app_user }}"
+            group: "{{ app_user }}"
+            recurse: yes
+
+    - name: Backend Deployment Group
+      block:
+        - name: Sync files
+          register: backend_sync
+          synchronize:
+            src: "./backend/"
+            dest: "{{ base_dest }}/backend"
+            delete: yes
+            rsync_opts:
+              - "--exclude=node_modules"
+
+        - name: Install and Build (tsc)
+          when: backend_sync.changed
+          shell: "npm install && npx tsc"
+          args:
+            chdir: "{{ base_dest }}/backend"
+          environment:
+            PATH: "{{ nvm_bin_dir }}:/usr/bin:/bin"
+          become_user: "{{ app_user }}"
+
+        - name: Fix ownership
+          when: backend_sync.changed
+          file:
+            path: "{{ base_dest }}/backend"
+            owner: "{{ app_user }}"
+            group: "{{ app_user }}"
+            recurse: yes
+
+    - name: Notifier Deployment Group
+      block:
+        - name: Sync files
+          register: notifier_sync
+          synchronize:
+            src: "./notifier/"
+            dest: "{{ base_dest }}/notifier"
+            delete: yes
+
+        - name: Create Python venv
+          when: notifier_sync.changed
+          command: python3 -m venv .venv
+          args:
+            chdir: "{{ base_dest }}/notifier"
+            creates: "{{ base_dest }}/notifier/.venv"
+
+        - name: Make alert scripts executable
+          when: notifier_sync.changed
+          file:
+            path: "{{ base_dest }}/notifier/{{ item }}"
+            mode: "+x"
+          loop:
+            - notify.py
+            - temp.notify.py
+          ignore_errors: true
+
+        - name: Fix ownership
+          when: notifier_sync.changed
+          file:
+            path: "{{ base_dest }}/notifier"
+            owner: "{{ app_user }}"
+            group: "{{ app_user }}"
+            recurse: yes
+
+    - name: Frontend Deployment Group
+      block:
+        - name: Push source to temporary Pi build folder
+          register: frontend_sync
+          synchronize:
+            src: "./frontend/"
+            dest: "/tmp/kackplaner_frontend_build/"
+            delete: yes
+
+        - name: Copy master .env into build folder
+          when: frontend_sync.changed
+          copy:
+            src: "{{ master_env }}"
+            dest: "/tmp/kackplaner_frontend_build/.env"
+            remote_src: yes
+
+        - name: Install and Build natively on Pi
+          when: frontend_sync.changed
+          shell: "npm install && npm run build"
+          args:
+            chdir: "/tmp/kackplaner_frontend_build"
+          environment:
+            PATH: "{{ nvm_bin_dir }}:/usr/bin:/bin"
+
+        - name: Ensure final dist directory exists
+          when: frontend_sync.changed
+          file:
+            path: "{{ base_dest }}/frontend/dist"
+            state: directory
+            owner: "{{ app_user }}"
+            group: "{{ app_user }}"
+
+        - name: Sync dist to final destination
+          when: frontend_sync.changed
+          command: rsync -av --delete /tmp/kackplaner_frontend_build/dist/ {{ base_dest }}/frontend/dist/
+
+        - name: Fix ownership and cleanup temp build folder
+          when: frontend_sync.changed
+          file:
+            path: "{{ item.path }}"
+            state: "{{ item.state }}"
+            owner: "{{ app_user | default(omit) }}"
+            group: "{{ app_user | default(omit) }}"
+            recurse: "{{ item.recurse | default(omit) }}"
+          loop:
+            - { path: "{{ base_dest }}/frontend/dist", state: directory, recurse: yes }
+            - { path: "/tmp/kackplaner_frontend_build", state: absent }
+
+    - name: Systemd Services and Startup Group
+      block:
+        - name: Sync systemd unit files
+          synchronize:
+            src: "./services/"
+            dest: "{{ base_dest }}/services"
+            delete: yes
+
+        - name: Fix ownership
+          file:
+            path: "{{ base_dest }}/services"
+            owner: "{{ app_user }}"
+            group: "{{ app_user }}"
+            recurse: yes
+
+        - name: Link units into systemd
+          command: systemctl link {{ base_dest }}/services/{{ item }}
+          loop: "{{ systemd_units }}"
+          register: link_result
+          changed_when: "'Created symlink' in link_result.stdout"
+
+        - name: Start active services and daemon-reload
+          systemd:
+            name: "{{ item }}"
+            state: started
+            daemon_reload: yes
+          loop: "{{ active_services }}"
