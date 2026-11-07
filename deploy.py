@@ -19,6 +19,7 @@ ACTIVE_SERVICES = [
     f'{APP_NAME}-external.service',
     f'{APP_NAME}-backend.service',
     f'{APP_NAME}-frontend.service',
+    f'{APP_NAME}-telegram-bot.service',
     f'{APP_NAME}-alert.timer',
     f'{APP_NAME}-alert-temp.timer',
 ]

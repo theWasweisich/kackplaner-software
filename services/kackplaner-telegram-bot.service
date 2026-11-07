@@ -1,0 +1,17 @@
+[Unit]
+Description=Kackplaner Telegram Bot Service
+After=network.target
+
+[Service]
+Type=simple
+User=user
+Group=user
+WorkingDirectory=/opt/kackplaner/notifier
+EnvironmentFile=/opt/kackplaner.env
+
+ExecStart=/opt/kackplaner/notifier/.venv/Scripts/python.exe /opt/kackplaner/notifier/telegram_long_polling_bot.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
