@@ -107,12 +107,12 @@ def get_last_schiss_message() -> str:
 @bot.message_handler(commands=[CMD_LAST_EVENT.command])
 async def send_last_schiss(message: telebot.types.Message):
     message_to_send = get_last_schiss_message()
-    await bot.send_message(message.chat.id, message_to_send, parse_mode="MarkdownV2")
+    await bot.send_message(message.chat.id, message_to_send, parse_mode="MarkdownV2", command_message_id=message.id)
 
 @bot.message_handler(commands=[CMD_STATUS.command])
 async def send_status(message: Message):
     message_to_send = "Status\\!"
-    await bot.send_message(message.chat.id, message_to_send, parse_mode="MarkdownV2")
+    await bot.send_message(message.chat.id, message_to_send, parse_mode="MarkdownV2", command_message_id=message.id)
 
 def is_dismiss_call(call: CallbackQuery) -> bool:
     return call.data.startswith("dismiss_msg:") if isinstance(call.data, str) else False
