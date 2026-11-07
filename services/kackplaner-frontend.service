@@ -9,7 +9,7 @@ Group=user
 WorkingDirectory=/opt/kackplaner/frontend/dist
 EnvironmentFile=/opt/kackplaner.env
 
-ExecStart=/usr/local/bin/serve -s . -l ${FRONTEND_PORT}
+ExecStart=/home/user/.nvm/versions/node/v24.22.1/bin/serve -s . -l ${FRONTEND_PORT}
 Restart=always
 RestartSec=3
 
