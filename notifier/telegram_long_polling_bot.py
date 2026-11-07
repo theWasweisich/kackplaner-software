@@ -42,14 +42,14 @@ def get_env_variables():
     chat_id = os.getenv("CHAT_ID")
     whitelist_path = os.getenv("CHAT_ID_WHITELIST")
 
+    if whitelist_path:
+        load_chat_id_whitelist_file(whitelist_path)
+
     if not chat_id:
         raise IncompleteConfiguration()
 
     if not db_path:
         raise IncompleteConfiguration()
-
-    if whitelist_path:
-        load_chat_id_whitelist_file(whitelist_path)
 
     try:
         ConfigVariables.CHAT_ID = int(chat_id)
@@ -68,8 +68,7 @@ def load_chat_id_whitelist_file(filepath: str) -> None:
     with open(filepath, "r") as f:
         whitelisted_ids = [int(num) for num in re.findall(r'\d+', f.read())]
 
-
-    if not ConfigVariables.CHAT_ID:
+    if not ConfigVariables.CHAT_ID and whitelisted_ids:
         ConfigVariables.CHAT_ID = whitelisted_ids[0]
 
     ConfigVariables.ALLOWED_CHAT_IDS = whitelisted_ids
@@ -139,19 +138,19 @@ def get_uptime() -> str:
         return ""
 
 def build_status_message() -> str:
-    message = "**Status\\!**"
+    message = "*Status\\!*"
     message += f"\nTemperature: *{escape_markdown_v2(str(get_temp()))}°C*"
     message += f"\nUptime: *{escape_markdown_v2(get_uptime())}*"
     return message
 
 @bot.message_handler(commands=[CMD_LAST_EVENT.command])
 async def send_last_schiss(message: telebot.types.Message):
-    message_to_send = get_last_schiss_message()
+    message_to_send = await asyncio.to_thread(get_last_schiss_message)
     await bot.send_message(message.chat.id, message_to_send, parse_mode="MarkdownV2")
 
 @bot.message_handler(commands=[CMD_STATUS.command])
 async def send_status(message: Message):
-    message_to_send = build_status_message()
+    message_to_send = await asyncio.to_thread(build_status_message)
     await bot.send_message(message.chat.id, message_to_send, parse_mode="MarkdownV2")
 
 def build_service_report_line(service_name: str) -> str:
@@ -180,15 +179,12 @@ def build_service_report_line(service_name: str) -> str:
 
 @bot.message_handler(commands=[CMD_SERVICES.command])
 async def send_service_status(message: Message):
-    services_to_check = [
-        "kackplaner-kiosk-supervisor.service",
-        "kackplaner-frontend.service",
-        "kackplaner-external.service",
-        "kackplaner-backend.service",
-    ]
+    def get_report():
+        services_to_check = ["kackplaner-kiosk-supervisor.service","kackplaner-frontend.service","kackplaner-external.service","kackplaner-backend.service",]
+        report_lines = [build_service_report_line(service) for service in services_to_check]
+        return "\n".join(report_lines)
 
-    report_lines = [build_service_report_line(service) for service in services_to_check]
-    final_report = "\n".join(report_lines)
+    final_report = await asyncio.to_thread(get_report)
 
     await bot.send_message(
         message.chat.id,
