@@ -6,7 +6,7 @@ After=network.target graphical.target
 Type=simple
 User=kiosk
 
-ExecStartPre=/bin/sh -c 'until pgrep -x labwc > /dev/null; do sleep 2; done'
+ExecStartPre=/bin/sh -c 'until [ -S /run/user/$(id -u)/wayland-0 ]; do sleep 1; done'
 
 ExecStart=/usr/bin/python3 /usr/local/bin/kiosk-scripts/kiosk-supervisor.py
 
