@@ -29,6 +29,8 @@ SYSTEMD_UNITS = ACTIVE_SERVICES + [
     f"{APP_NAME}-alert-temp.service",
 ]
 
+NVM_BIN_DIR = None
+
 # ==========================================
 # CORE UTILITIES
 # ==========================================
@@ -71,6 +73,19 @@ def verify_prerequisites():
 
     if not MASTER_ENV.exists():
         deploy_print(f"❌ Master config not found at {MASTER_ENV}")
+        sys.exit(1)
+
+def resolve_nvm_path():
+    global NVM_BIN_DIR
+    deploy_print("Resolving NVM Node path...")
+    try:
+        cmd = ["sudo", "-i", "-u", APP_USER, "bash", "-c", "source ~/.nvm/nvm.sh && nvm which current"]
+        node_path = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL).strip()
+
+        NVM_BIN_DIR = Path(node_path).parent
+        deploy_print(f"Found NVM binaries at {NVM_BIN_DIR}")
+    except subprocess.CalledProcessError:
+        deploy_print(f"Failed to resolve NVM path for user '{APP_USER}'")
         sys.exit(1)
 
 def manage_services(action: str):
@@ -156,9 +171,9 @@ def reload_display():
 
 def main():
     verify_prerequisites()
+    resolve_nvm_path()
     
     try:
-        run_cmd(["source", f"/home/{APP_USER}/.nvm/nvm.sh"], run_as=APP_USER)
         manage_services('stop')
         setup_data_directory()
 
