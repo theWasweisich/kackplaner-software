@@ -5,6 +5,7 @@ After=network.target graphical.target
 [Service]
 Type=simple
 User=kiosk
+Environment=PYTHONUNBUFFERED=1
 
 ExecStartPre=/bin/sh -c 'until [ -S /run/user/$(id -u)/wayland-0 ]; do sleep 1; done'
 
