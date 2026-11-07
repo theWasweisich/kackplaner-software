@@ -29,7 +29,7 @@ SYSTEMD_UNITS = ACTIVE_SERVICES + [
     f"{APP_NAME}-alert-temp.service",
 ]
 
-NVM_BIN_DIR = None
+NVM_BIN_DIR: Path | None = None
 
 # ==========================================
 # CORE UTILITIES
@@ -40,6 +40,10 @@ class DeployError(Exception):
 
 def run_cmd(cmd: list[str], cwd: str | Path | None = None, run_as: str | None = None):
     """Executes a shell command. Raises DeployError if it fails."""
+
+    if cmd[0] in ["npm", "npx", "tsc"] and NVM_BIN_DIR:
+        cmd[0] = str(NVM_BIN_DIR / cmd[0])
+
     if run_as:
         cmd = ['sudo', '-u', run_as] + cmd
 
