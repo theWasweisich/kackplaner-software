@@ -111,7 +111,7 @@ async def send_last_schiss(message: telebot.types.Message):
 
 @bot.message_handler(commands=[CMD_STATUS.command])
 async def send_status(message: Message):
-    message_to_send = "Status!"
+    message_to_send = "Status\\!"
     await bot.send_message(message.chat.id, message_to_send, parse_mode="MarkdownV2")
 
 @bot.callback_query_handler(func=lambda call: call.data == "dismiss_msg")
