@@ -215,6 +215,7 @@ async def set_commands_list():
     all_commands = [
         CMD_LAST_EVENT,
         CMD_STATUS,
+        CMD_SERVICES,
     ]
 
     await bot.set_my_commands(
