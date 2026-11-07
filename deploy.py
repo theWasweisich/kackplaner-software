@@ -41,11 +41,20 @@ class DeployError(Exception):
 def run_cmd(cmd: list[str], cwd: str | Path | None = None, run_as: str | None = None):
     """Executes a shell command. Raises DeployError if it fails."""
 
-    if cmd[0] in ["npm", "npx", "tsc"] and NVM_BIN_DIR:
+    is_node_cmd = cmd[0] in ["npm", "npx", "tsc"]
+
+    if is_node_cmd and NVM_BIN_DIR:
         cmd[0] = str(NVM_BIN_DIR / cmd[0])
 
-    if run_as:
-        cmd = ['sudo', '-u', run_as] + cmd
+        injected_path = f"PATH={NVM_BIN_DIR}:/usr/bin:/bin"
+
+        if run_as:
+            cmd = ['sudo', '-u', run_as, 'env', injected_path] + cmd
+        else:
+            cmd = ['env', injected_path] + cmd
+    else:
+        if run_as:
+            cmd = ['sudo', '-u', run_as] + cmd
 
     print(f"  > {' '.join(cmd)}")
     try:
