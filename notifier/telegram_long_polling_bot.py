@@ -176,7 +176,7 @@ def build_service_report_line(service_name: str) -> str:
             marker = "🟣"
             status_msg = "unknown"
 
-    return f"{marker} {service_name} is: {status_msg}"
+    return f"{marker} {escape_markdown_v2(service_name)} is: *{status_msg}*"
 
 @bot.message_handler(commands=[CMD_SERVICES.command])
 async def send_service_status(message: Message):
