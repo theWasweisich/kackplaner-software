@@ -100,7 +100,7 @@ async def check_last_schiss():
 
 def main():
     logging.info("Starting polling bot")
-    asyncio.gather(
+    asyncio.run(
         bot.polling(non_stop=True),
     )
 
