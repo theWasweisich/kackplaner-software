@@ -62,6 +62,8 @@
             src: "./external/"
             dest: "{{ base_dest }}/external"
             delete: yes
+            owner: no
+            group: no
             rsync_opts:
               - "--exclude=node_modules"
           register: external_sync
@@ -90,6 +92,8 @@
             src: "./backend/"
             dest: "{{ base_dest }}/backend"
             delete: yes
+            owner: no
+            group: no
             rsync_opts:
               - "--exclude=node_modules"
 
@@ -118,6 +122,8 @@
             src: "./notifier/"
             dest: "{{ base_dest }}/notifier"
             delete: yes
+            owner: no
+            group: no
 
         - name: Create Python venv
           when: notifier_sync.changed
@@ -152,6 +158,8 @@
             src: "./frontend/"
             dest: "/tmp/kackplaner_frontend_build/"
             delete: yes
+            owner: no
+            group: no
 
         - name: Copy master .env into build folder
           when: frontend_sync.changed
@@ -199,6 +207,8 @@
             src: "./services/"
             dest: "{{ base_dest }}/services"
             delete: yes
+            owner: no
+            group: no
 
         - name: Fix ownership
           file:
