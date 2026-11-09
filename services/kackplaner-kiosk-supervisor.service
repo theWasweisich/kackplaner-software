@@ -7,7 +7,7 @@ Type=simple
 User=kiosk
 Environment=PYTHONUNBUFFERED=1
 
-ExecStart=/usr/bin/python3 /usr/local/bin/kiosk-scripts/kiosk-supervisor.py
+ExecStart=/usr/bin/python3 /opt/kackplaner/kiosk-scripts/kiosk-supervisor.py
 
 Restart=always
 RestartSec=3
