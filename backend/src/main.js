@@ -1,59 +1,283 @@
 import express, {} from 'express';
-import sqlite3 from 'sqlite3';
-import { open } from 'sqlite';
+import Database from 'better-sqlite3';
 import cors from 'cors';
+import dotenv from 'dotenv';
+import { exec } from "child_process";
 import path from 'path';
-const PORT = 8090;
-const DB_PATH = "database.db";
-sqlite3.verbose();
-const db = await open({
-    filename: DB_PATH,
-    driver: sqlite3.Database
-});
-const app = express();
-db.run("CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, title TEXT, start TEXT, allDay INTEGER, display TEXT)");
-app.use(express.json());
-app.use(cors());
-app.put("/kackevent", async (req, res) => {
-    const stmt = await db.prepare("INSERT INTO events (id, title, start, allDay, display) VALUES (?, ?, ?, ?, ?)");
-    const putBody = req.body;
-    for (const event of putBody.events) {
-        stmt.bind(event.id, event.title, event.start, event.allDay, event.display);
-        stmt.run();
+import fs from 'fs';
+dotenv.config();
+const BACKEND_PORT = process.env.BACKEND_PORT || 8090;
+// noinspection JSUnusedLocalSymbols
+const FRONTEND_PORT = process.env.FRONTEND_PORT || 2222;
+const DB_PATH = process.env.DB_PATH || "database.db";
+const BACKLIGHT_BASE = '/sys/class/backlight/';
+let brightnessFile = null;
+try {
+    const folders = fs.readdirSync(BACKLIGHT_BASE);
+    if (folders.length > 0) {
+        brightnessFile = path.join(BACKLIGHT_BASE, folders[0], 'brightness');
+        console.log(`[Display] Bound to backlight file: ${brightnessFile}`);
     }
-    res.status(201).json({
+}
+catch (e) {
+    console.error("Could not find brightness file!");
+}
+const db = new Database(DB_PATH);
+db.pragma("journal_mode = WAL");
+db.pragma("busy_timeout = 5000");
+const app = express();
+const allowedOrigins = [
+    `http://localhost:${FRONTEND_PORT}`,
+    `http://127.0.0.1:${FRONTEND_PORT}`,
+];
+app.use(cors({
+    origin: (origin, callback) => {
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true);
+        }
+        else {
+            callback(new Error(`"${origin}" Not allowed by CORS`));
+        }
+    },
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    allowedHeaders: ['Content-Type', 'x-client-id', 'x-timestamp', 'x-signature']
+}));
+const createTableSQLString = `
+    CREATE TABLE IF NOT EXISTS events (
+        id INTEGER PRIMARY KEY,
+        title TEXT,
+        start TEXT,
+        microlax INTEGER
+    );
+`;
+try {
+    db.prepare(createTableSQLString).run();
+}
+catch (e) {
+    console.error(`Error during Schema creation: `, e);
+}
+function asTransaction(func) {
+    const begin = db.prepare("BEGIN");
+    const commit = db.prepare("COMMIT");
+    const rollback = db.prepare("ROLLBACK");
+    return function (...args) {
+        begin.run();
+        try {
+            func(...args);
+            commit.run();
+            return true;
+        }
+        catch (e) {
+            if (e instanceof Error) {
+                console.error("Error Type: ", e.name);
+                console.error("Error Message: ", e.message);
+            }
+            else {
+                console.error("Unknown error type: ", e);
+            }
+            return false;
+        }
+        finally {
+            if (db.inTransaction) {
+                rollback.run();
+            }
+        }
+    };
+}
+function isValidDateString(dateString) {
+    if (typeof dateString !== "string")
+        return false;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateString))
+        return false;
+    const date = new Date(dateString);
+    if (isNaN(date.getTime()))
+        return false;
+    return date.toISOString().substring(0, 10) === dateString;
+}
+app.use(express.json());
+function networkToDbEvents(events) {
+    const dbEvents = [];
+    for (const event of events) {
+        let eventId = parseInt(event.id ? event.id : "");
+        if (!eventId) {
+            eventId = undefined;
+        }
+        dbEvents.push({
+            id: eventId,
+            start: event.start,
+            title: event.title,
+            microlax: event.microlax ? 1 : 0,
+        });
+    }
+    return dbEvents;
+}
+function dbEventsToNetwork(events) {
+    const networkEvents = [];
+    for (const event of events) {
+        networkEvents.push({
+            id: String(event.id),
+            title: event.title,
+            start: event.start,
+            microlax: event.microlax == 1
+        });
+    }
+    return networkEvents;
+}
+function insertEvents(events) {
+    const dbEvents = networkToDbEvents(events);
+    const insertStmt = db.prepare("INSERT INTO events (id, title, start, microlax) VALUES (?, ?, ?, ?)");
+    const insertEvents = asTransaction((events) => {
+        const eventsSet = new Set(events);
+        for (const event of eventsSet) {
+            console.log("Inserting event:", event);
+            insertStmt.run(event.id, event.title, event.start, event.microlax);
+        }
+    });
+    return insertEvents(dbEvents);
+}
+function validateEvents(events) {
+    for (const event of events) {
+        const id = event.id;
+        const startDate = event.start;
+        const title = event.title;
+        if (!isValidDateString(startDate)) {
+            return "date";
+        }
+        if (!title.isWellFormed() || title.trim().length != title.length) {
+            return "title";
+        }
+        if (id && isNaN(parseInt(id, 10))) {
+            return "id";
+        }
+    }
+    return "success";
+}
+app.put("/kackevent", (req, res) => {
+    const putBody = req.body;
+    if (!("events" in putBody)) {
+        return res.status(401).json({
+            error: "Invalid payload. Expected events array"
+        });
+    }
+    if (!Array.isArray(putBody.events)) {
+        return res.status(401).json({
+            error: "Invalid payload. Malformed events property"
+        });
+    }
+    const validationResult = validateEvents(putBody.events);
+    if (validationResult !== "success") {
+        if (validationResult === "date")
+            return res.status(401).json({ error: "Invalid Date format", events: putBody.events });
+        if (validationResult === "title")
+            return res.status(401).json({ error: "Invalid title", events: putBody.events });
+        if (validationResult === "id")
+            return res.status(401).json({ error: "Invalid Id", events: putBody.events });
+        return res.sendStatus(500);
+    }
+    const eventsToBeInserted = ([...putBody.events]);
+    const success = insertEvents(eventsToBeInserted);
+    if (success) {
+        return res.status(201).json({
+            "events": eventsToBeInserted
+        });
+    }
+    else {
+        console.error("There was an error while inserting events. Rollback occurred");
+    }
+    return res.status(400).json({
         "events": putBody.events
     });
 });
-function getDateFromQueryParam(queryParam) {
-    return new Date(queryParam.replace(" ", "+"));
+function getConstrainedEvents(fromStr, toStr) {
+    const stmt = db.prepare(`
+            SELECT
+                 id,
+                 title,
+                 start,
+                 microlax
+            FROM
+                events
+            WHERE
+                unixepoch(?) < unixepoch(start)
+              AND
+                unixepoch(?) > unixepoch(start)`);
+    const dbRes = stmt.all(fromStr, toStr);
+    console.log("DB Res (constrained):", dbRes);
+    return dbRes;
 }
-function getStartEndFromQuery(req) {
-    const queryParams = req.query;
-    return {
-        start: getDateFromQueryParam(queryParams.start),
-        end: getDateFromQueryParam(queryParams.end)
-    };
+function getUnconstrainedEvents() {
+    const stmt = db.prepare("SELECT id, title, start, microlax FROM events");
+    const dbRes = stmt.all();
+    console.log("DB Res (unconstrained):", dbRes);
+    return dbRes;
 }
-app.get("/kackevent", async (req, res) => {
-    const queryParams = req.query;
-    const dates = getStartEndFromQuery(req);
-    const dbRes = await db.all("SELECT id, title, start, allDay, display FROM events WHERE unixepoch(?) < unixepoch(start) AND unixepoch(?) > unixepoch(start)", dates.start.toISOString(), dates.end.toISOString());
-    console.log("DB Res: ", dbRes);
+function getEvents(fromStr, toStr) {
+    if (fromStr != undefined && toStr == undefined)
+        return;
+    if (fromStr !== undefined && toStr !== undefined) {
+        const dbEvents = getConstrainedEvents(fromStr, toStr);
+        if (dbEvents === undefined) {
+            return undefined;
+        }
+        return dbEventsToNetwork(dbEvents);
+    }
+    const dbRes = getUnconstrainedEvents();
+    return dbEventsToNetwork(dbRes);
+}
+function cleanDateStringInput(input) {
+    if (typeof input !== "string")
+        return "";
+    return input.substring(0, 10);
+}
+app.get("/kackevent", (req, res) => {
+    const startStr = req.query.start;
+    const endStr = req.query.end;
+    if (startStr === undefined || endStr === undefined) {
+        return res.status(401).json({
+            error: "Expected two query parameters: start and end"
+        });
+    }
+    if (typeof startStr !== "string" || typeof endStr !== "string") {
+        return res.sendStatus(500);
+    }
+    const cleanStart = cleanDateStringInput(startStr);
+    const cleanEnd = cleanDateStringInput(endStr);
+    if (!isValidDateString(cleanStart) || !isValidDateString(cleanEnd)) {
+        res.status(400).json({ error: "Invalid date format", start: startStr, end: endStr });
+        return;
+    }
+    const dbRes = getEvents(cleanStart, cleanEnd);
+    if (dbRes === undefined)
+        return res.status(500).json({ error: '?', start: startStr, end: endStr });
     res.json({
         "events": dbRes
     });
 });
-app.delete("/kackevent", async (req, res) => {
-    const queryParams = req.query;
-    const date = getDateFromQueryParam(queryParams.date);
-    const dateExists = ((await db.get("SELECT * FROM events WHERE unixepoch(start) == unixepoch(?)", date.toISOString()))
-        !== undefined);
+app.get("/kackevent/dump", async (req, res) => {
+    const dbRes = getEvents();
+    if (dbRes === undefined)
+        return res.sendStatus(500);
+    return res.json({
+        'events': dbRes
+    });
+});
+function doesDateExist(dateStr) {
+    const stmt = db.prepare("SELECT id FROM events WHERE unixepoch(start) == unixepoch(?)");
+    return stmt.get(dateStr) !== undefined;
+}
+app.delete("/kackevent", (req, res) => {
+    const dateQuery = req.query.date;
+    const dateStr = typeof dateQuery === 'string' ? dateQuery.substring(0, 10) : "";
+    if (!isValidDateString(dateStr)) {
+        res.status(400).json({ error: "Invalid date format", date: dateQuery });
+    }
+    const dateExists = doesDateExist(dateStr);
     if (!dateExists) {
-        res.status(404).send();
+        res.status(404).json({ error: "This date does not exist!", date: dateQuery });
         return;
     }
-    const dbRes = await db.run("DELETE FROM events WHERE unixepoch(start) == unixepoch(?)", date.toISOString());
+    const deleteStmt = db.prepare("DELETE FROM events WHERE unixepoch(start) == unixepoch(?)");
+    const dbRes = deleteStmt.run(dateStr);
     if (dbRes.changes && dbRes.changes == 1) {
         res.status(200).send();
     }
@@ -61,6 +285,69 @@ app.delete("/kackevent", async (req, res) => {
         res.status(500).send();
     }
 });
-app.listen(PORT, () => {
-    console.log(`Listening on http://[::1]:${PORT}`);
+app.post('/shutdown', (req, res) => {
+    console.log("Shutdown requested via API endpoint");
+    res.status(200).json({ message: "Shutting down..." });
+    setTimeout(() => {
+        exec('sudo /bin/systemctl poweroff', (error) => {
+            if (error) {
+                console.error(`Shutdown failed: ${error.message}`);
+            }
+        });
+    }, 1000);
+});
+app.post("/reboot", (req, res) => {
+    res.status(200).json({ message: "Rebooting..." });
+    setTimeout(() => {
+        exec('sudo systemctl reboot', (error) => {
+            if (error) {
+                console.error("Reboot failed:", error);
+            }
+        });
+    }, 1000);
+});
+function setScreenBrightness(brightness) {
+    if (typeof brightness !== "number")
+        return false;
+    if (brightness > 255 || brightness < 0) {
+        return false;
+    }
+    if (!brightnessFile) {
+        console.error("No brightness file found.");
+        return false;
+    }
+    try {
+        fs.writeFileSync(brightnessFile, brightness.toString(), 'utf-8');
+        return true;
+    }
+    catch (err) {
+        console.error(`Error setting screen brightness:`, err);
+        return false;
+    }
+}
+app.post("/display/brightness", (req, res) => {
+    const queryBrightness = req.query.brightness;
+    if (typeof queryBrightness !== "string") {
+        return res.sendStatus(400);
+    }
+    const numberBrightness = parseInt(queryBrightness);
+    if (Number.isNaN(numberBrightness)) {
+        return res.sendStatus(400);
+    }
+    const success = setScreenBrightness(numberBrightness);
+    if (success) {
+        return res.sendStatus(200);
+    }
+    else {
+        return res.sendStatus(503);
+    }
+});
+app.use((err, req, res, next) => {
+    console.error("Unhandled Error:", err);
+    res.status(500);
+    res.send();
+});
+app.listen(BACKEND_PORT, () => {
+    // noinspection HttpUrlsUsage
+    console.log(`Listening on http://[::1]:${BACKEND_PORT}`);
 });

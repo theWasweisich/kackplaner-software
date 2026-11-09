@@ -9,6 +9,16 @@
     base_dest: "/opt/{{ app_name }}"
     master_env: "/opt/{{ app_name }}.env"
 
+    restart_triggers:
+      external:
+        - "{{ app_name }}-external.service"
+      backend:
+        - "{{ app_name }}-backend.service"
+      frontend:
+        - "{{ app_name }}-frontend.service"
+      notifier:
+        - "{{ app_name }}-telegram-bot.service"
+
     active_services:
       - "{{ app_name }}-external.service"
       - "{{ app_name }}-backend.service"
@@ -41,13 +51,6 @@
           set_fact:
             nvm_bin_dir: "{{ nvm_which.stdout | dirname }}"
 
-        - name: Stop active services
-          systemd:
-            name: "{{ item }}"
-            state: stopped
-          loop: "{{ active_services }}"
-          ignore_errors: true
-
         - name: Set up persistent data directory
           file:
             path: "{{ base_dest }}/data"
@@ -57,10 +60,18 @@
 
     - name: External Deployment Group
       block:
-        - name: Sync files
+        - name: Local Build - Compile TypeScript (Fast incremental build)
+          delegate_to: localhost
+          become: no
+          shell: "source ~/.nvm/nvm.sh && npm install && npx tsc"
+          args:
+            executable: /bin/bash
+            chdir: "{{ playbook_dir }}/external"
+
+        - name: Push external to Pi (Acts as our change detector)
           synchronize:
-            src: "./external/"
-            dest: "{{ base_dest }}/external"
+            src: "{{ playbook_dir }}/external/"
+            dest: "{{ base_dest }}/external/"
             delete: yes
             owner: no
             group: no
@@ -68,9 +79,9 @@
               - "--exclude=node_modules"
           register: external_sync
 
-        - name: Install and Build (tsc)
+        - name: Pi Build - Install ARM-compatible Node modules
           when: external_sync.changed
-          shell: "npm install && npx tsc"
+          shell: "npm install"
           args:
             chdir: "{{ base_dest }}/external"
           environment:
@@ -78,6 +89,7 @@
           become_user: "{{ app_user }}"
 
         - name: Fix ownership
+          when: external_sync.changed
           file:
             path: "{{ base_dest }}/external"
             owner: "{{ app_user }}"
@@ -86,20 +98,28 @@
 
     - name: Backend Deployment Group
       block:
-        - name: Sync files
-          register: backend_sync
+        - name: Local Build
+          delegate_to: localhost
+          become: no
+          shell: "source ~/.nvm/nvm.sh && npm install && npx tsc"
+          args:
+            executable: /bin/bash
+            chdir: "{{ playbook_dir }}/backend"
+
+        - name: Push backend to Pi (Acts as our change detector)
           synchronize:
-            src: "./backend/"
-            dest: "{{ base_dest }}/backend"
+            src: "{{ playbook_dir }}/backend/"
+            dest: "{{ base_dest }}/backend/"
             delete: yes
             owner: no
             group: no
             rsync_opts:
               - "--exclude=node_modules"
+          register: backend_sync
 
-        - name: Install and Build (tsc)
+        - name: Pi Build
           when: backend_sync.changed
-          shell: "npm install && npx tsc"
+          shell: "npm install"
           args:
             chdir: "{{ base_dest }}/backend"
           environment:
@@ -116,14 +136,14 @@
 
     - name: Notifier Deployment Group
       block:
-        - name: Sync files
-          register: notifier_sync
+        - name: Sync notifier files directly to Pi
           synchronize:
-            src: "./notifier/"
-            dest: "{{ base_dest }}/notifier"
+            src: "{{ playbook_dir }}/notifier/"
+            dest: "{{ base_dest }}/notifier/"
             delete: yes
             owner: no
             group: no
+          register: notifier_sync
 
         - name: Create Python venv
           when: notifier_sync.changed
@@ -152,80 +172,108 @@
 
     - name: Frontend Deployment Group
       block:
-        - name: Push source to temporary Pi build folder
-          register: frontend_sync
-          synchronize:
-            src: "./frontend/"
-            dest: "/tmp/kackplaner_frontend_build/"
-            delete: yes
-            owner: no
-            group: no
-
-        - name: Copy master .env into build folder
-          when: frontend_sync.changed
-          copy:
+        - name: Download master .env from Pi for local build
+          fetch:
             src: "{{ master_env }}"
-            dest: "/tmp/kackplaner_frontend_build/.env"
-            remote_src: yes
+            dest: "{{ playbook_dir }}/frontend/.env"
+            flat: yes
 
-        - name: Install and Build natively on Pi
-          when: frontend_sync.changed
-          shell: "npm install && npm run build"
+        - name: Local Build - Compile Frontend
+          delegate_to: localhost
+          become: no
+          shell: "source ~/.nvm/nvm.sh && npm install && npm run build"
           args:
-            chdir: "/tmp/kackplaner_frontend_build"
-          environment:
-            PATH: "{{ nvm_bin_dir }}:/usr/bin:/bin"
+            executable: /bin/bash
+            chdir: "{{ playbook_dir }}/frontend"
 
-        - name: Ensure final dist directory exists
-          when: frontend_sync.changed
+        - name: Ensure final dist directory exists on Pi
           file:
             path: "{{ base_dest }}/frontend/dist"
             state: directory
             owner: "{{ app_user }}"
             group: "{{ app_user }}"
 
-        - name: Sync dist to final destination
-          when: frontend_sync.changed
-          command: rsync -av --delete /tmp/kackplaner_frontend_build/dist/ {{ base_dest }}/frontend/dist/
-
-        - name: Fix ownership and cleanup temp build folder
-          when: frontend_sync.changed
-          file:
-            path: "{{ item.path }}"
-            state: "{{ item.state }}"
-            owner: "{{ app_user | default(omit) }}"
-            group: "{{ app_user | default(omit) }}"
-            recurse: "{{ item.recurse | default(omit) }}"
-          loop:
-            - { path: "{{ base_dest }}/frontend/dist", state: directory, recurse: yes }
-            - { path: "/tmp/kackplaner_frontend_build", state: absent }
-
-    - name: Systemd Services and Startup Group
-      block:
-        - name: Sync systemd unit files
+        - name: Push compiled dist to Pi (Acts as our change detector)
           synchronize:
-            src: "./services/"
-            dest: "{{ base_dest }}/services"
+            src: "{{ playbook_dir }}/frontend/dist/"
+            dest: "{{ base_dest }}/frontend/dist/"
             delete: yes
             owner: no
             group: no
+          register: frontend_sync
 
-        - name: Fix ownership
+        - name: Fix ownership of final dist
+          when: frontend_sync.changed
           file:
-            path: "{{ base_dest }}/services"
+            path: "{{ base_dest }}/frontend/dist"
             owner: "{{ app_user }}"
             group: "{{ app_user }}"
             recurse: yes
 
-        - name: Link units into systemd
-          command: systemctl link {{ base_dest }}/services/{{ item }}
+    - name: Systemd Services and Startup Group
+      block:
+        - name: Copy systemd units
+          copy:
+            src: "{{ playbook_dir }}/services/{{ item }}"
+            dest: "{{ base_dest }}/services/{{ item }}"
+            owner: "{{ app_user }}"
+            group: "{{ app_user }}"
           loop: "{{ systemd_units }}"
+          register: service_files_sync
+
+        - name: Link updated units into systemd
+          command: systemctl link {{ base_dest }}/services/{{ item.item }}
+          loop: "{{ service_files_sync.results }}"
+          loop_control:
+            label: "{{ item.item }}"
+          when: item.changed
           register: link_result
           changed_when: "'Created symlink' in link_result.stdout"
 
-        - name: Start active services and daemon-reload
+        - name: Reload systemd daemon if units changed
+          systemd:
+            daemon_reload: yes
+          when: service_files_sync.changed
+
+        - name: Ensure all services are online (Starts if currently down)
           systemd:
             name: "{{ item }}"
             state: started
-            daemon_reload: yes
           loop: "{{ active_services }}"
+
+        - name: Restart External if source code changed
+          systemd:
+            name: "{{ item }}"
+            state: restarted
+          loop: "{{ restart_triggers.external }}"
+          when: external_sync.changed
+
+        - name: Restart Backend if source code changed
+          systemd:
+            name: "{{ item }}"
+            state: restarted
+          loop: "{{ restart_triggers.backend }}"
+          when: backend_sync.changed
+
+        - name: Restart Frontend if source code changed
+          systemd:
+            name: "{{ item }}"
+            state: restarted
+          loop: "{{ restart_triggers.frontend }}"
+          when: frontend_sync.changed
+
+        - name: Restart Notifiers if source code changed
+          systemd:
+            name: "{{ item }}"
+            state: restarted
+          loop: "{{ restart_triggers.notifier }}"
+          when: notifier_sync.changed
+
+        - name: Restart any service whose .service or .timer file changed
+          systemd:
+            name: "{{ item.item }}"
+            state: restarted
+          loop: "{{ service_files_sync.results }}"
+          loop_control:
+            label: "{{ item.item }}"
+          when: item.changed and item.item in active_services

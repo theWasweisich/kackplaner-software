@@ -158,6 +158,11 @@ def build_service_report_line(service_name: str) -> str:
     marker = "⚪"
     status_msg = "unknown"
 
+    if service_name.startswith("kackplaner-"):
+        service_name = service_name.removeprefix("kackplaner-")
+
+    service_name = service_name.removesuffix(".service")
+
     match status:
         case ServiceStatus.ACTIVE:
             marker = "🟢"
