@@ -29,6 +29,8 @@
         - "{{ app_name }}-frontend.service"
       notifier:
         - "{{ app_name }}-telegram-bot.service"
+      kiosk_scripts:
+        - "{{ app_name }}-kiosk-supervisor.service"
 
   tasks:
     - name: Prerequisites and Setup Group
@@ -77,6 +79,7 @@
             delete: true
             owner: false
             group: false
+            checksum: true
             rsync_opts:
               - "--exclude=node_modules"
           register: external_sync
@@ -119,6 +122,7 @@
             delete: true
             owner: false
             group: false
+            checksum: true
             rsync_opts:
               - "--exclude=node_modules"
           register: backend_sync
@@ -152,6 +156,7 @@
             delete: true
             owner: false
             group: false
+            checksum: true
           register: notifier_sync
 
         - name: Create Python venv
@@ -192,8 +197,9 @@
             delete: true
             owner: false
             group: false
+            checksum: true
           register: kiosk_scripts_sync
-        
+
         - name: Make scripts executable and fix ownership
           when: kiosk_scripts_sync.changed
           ansible.builtin.file:
@@ -236,6 +242,7 @@
             delete: true
             owner: false
             group: false
+            checksum: true
           register: frontend_sync
 
         - name: Fix ownership of final dist
@@ -283,35 +290,28 @@
           loop: "{{ active_services }}"
 
         - name: Restart External daemons if source code changed
-          ansible.builtin.systemd:
-            name: "{{ item }}"
-            state: restarted
-          loop: "{{ restart_triggers.external }}"
+          ansible.builtin.command: "systemctl restart {{ restart_triggers.external | join(' ') }}"
           when: external_sync.changed
           # noqa: no-handler
 
         - name: Restart Backend daemons if source code changed
-          ansible.builtin.systemd:
-            name: "{{ item }}"
-            state: restarted
-          loop: "{{ restart_triggers.backend }}"
+          ansible.builtin.command: "systemctl restart {{ restart_triggers.backend | join(' ') }}"
           when: backend_sync.changed
           # noqa: no-handler
 
         - name: Restart Frontend daemons if source code changed
-          ansible.builtin.systemd:
-            name: "{{ item }}"
-            state: restarted
-          loop: "{{ restart_triggers.frontend }}"
+          ansible.builtin.command: "systemctl restart {{ restart_triggers.frontend | join(' ') }}"
           when: frontend_sync.changed
           # noqa: no-handler
 
         - name: Restart Notifier daemons if source code changed
-          ansible.builtin.systemd:
-            name: "{{ item }}"
-            state: restarted
-          loop: "{{ restart_triggers.notifier }}"
+          ansible.builtin.command: "systemctl restart {{ restart_triggers.notifier | join(' ') }}"
           when: notifier_sync.changed
+          # noqa: no-handler
+
+        - name: Restart Kiosk Supervisor
+          ansible.builtin.command: "systemctl restart {{ restart_triggers.kiosk_scripts | join(' ') }}"
+          when: kiosk_scripts_sync.changed
           # noqa: no-handler
 
         - name: Restart any service whose unit file changed

@@ -89,6 +89,6 @@ def main():
         time.sleep(0.5)
 
 if __name__ == "__main__":
-    logging.basicConfig()
+    logging.basicConfig(level=logging.DEBUG)
     logging.debug("Alive!")
     main()

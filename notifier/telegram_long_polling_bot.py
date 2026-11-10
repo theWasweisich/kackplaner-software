@@ -1,5 +1,4 @@
 # https://github.com/eternnoir/pyTelegramBotAPI
-import datetime
 import subprocess
 
 from auto_dismiss_async_bot import AutoDismissAsyncTeleBot
@@ -8,8 +7,6 @@ from telebot.types import (
     Message,
     BotCommand,
     CallbackQuery,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton
 )
 from dataclasses import dataclass
 from service_status import ServiceStatus, check_service_status
@@ -30,7 +27,6 @@ class MenuButton:
 
 class ConfigVariables:
     TELEGRAM_TOKEN: str
-    CHAT_ID: int
     ALLOWED_CHAT_IDS: list[int] = []
     DB_PATH: str
 
@@ -52,11 +48,9 @@ def get_env_variables():
         raise IncompleteConfiguration()
 
     try:
-        ConfigVariables.CHAT_ID = int(chat_id)
+        ConfigVariables.ALLOWED_CHAT_IDS.append(int(chat_id))
     except ValueError:
-        load_chat_id_whitelist_file(chat_id)
-        if ConfigVariables.CHAT_ID is None:
-            raise IncompleteConfiguration()
+        pass
 
 
 def load_chat_id_whitelist_file(filepath: str) -> None:
@@ -68,22 +62,19 @@ def load_chat_id_whitelist_file(filepath: str) -> None:
     with open(filepath, "r") as f:
         whitelisted_ids = [int(num) for num in re.findall(r'\d+', f.read())]
 
-    if not ConfigVariables.CHAT_ID and whitelisted_ids:
-        ConfigVariables.CHAT_ID = whitelisted_ids[0]
-
-    ConfigVariables.ALLOWED_CHAT_IDS = whitelisted_ids
+    ConfigVariables.ALLOWED_CHAT_IDS.extend(whitelisted_ids)
     return None
 
 get_env_variables()
 
 if ConfigVariables.TELEGRAM_TOKEN is None:
-    raise IncompleteConfiguration()
+    raise IncompleteConfiguration("No bot token was provided")
 
-if ConfigVariables.CHAT_ID is None:
-    raise IncompleteConfiguration()
+if len(ConfigVariables.ALLOWED_CHAT_IDS) < 1:
+    raise IncompleteConfiguration("No chat id(s) provided")
 
 if ConfigVariables.DB_PATH is None:
-    raise IncompleteConfiguration()
+    raise IncompleteConfiguration("No database path was provided")
 
 CMD_LAST_EVENT = BotCommand("lastevent", "See how many days passed since the last event")
 CMD_STATUS = BotCommand("status", "Check the system status")
@@ -91,10 +82,11 @@ CMD_SERVICES = BotCommand("services", "Check the status of systemd units")
 
 bot = AutoDismissAsyncTeleBot(ConfigVariables.TELEGRAM_TOKEN)
 
-bot.setup_middleware(RestrictChatMiddleware(allowed_ids=[
-    ConfigVariables.CHAT_ID,
-    *ConfigVariables.ALLOWED_CHAT_IDS
-]))
+bot.setup_middleware(
+    RestrictChatMiddleware(
+        allowed_ids=ConfigVariables.ALLOWED_CHAT_IDS
+    )
+)
 
 def escape_markdown_v2(text: str) -> str:
     """Escapes strings for Telegram's strict MarkdownV2 formatting."""
