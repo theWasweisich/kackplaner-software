@@ -283,12 +283,6 @@
           when: service_files_sync.changed
           # noqa: no-handler
 
-        - name: Ensure all services are online
-          ansible.builtin.systemd:
-            name: "{{ item }}"
-            state: started
-          loop: "{{ active_services }}"
-
         - name: Restart External daemons if source code changed
           ansible.builtin.command: "systemctl restart {{ restart_triggers.external | join(' ') }}"
           when: external_sync.changed
