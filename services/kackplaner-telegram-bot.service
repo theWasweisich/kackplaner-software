@@ -9,8 +9,6 @@ Group=user
 WorkingDirectory=/opt/kackplaner/notifier
 EnvironmentFile=/opt/kackplaner.env
 
-ExecStartPre=/usr/bin/python3 -m venv /opt/kackplaner/notifier/venv
-ExecStartPre=/opt/kackplaner/notifier/venv/bin/pip install -r /opt/kackplaner/notifier/requirements.txt
 ExecStart=/opt/kackplaner/notifier/venv/bin/python /opt/kackplaner/notifier/telegram_long_polling_bot.py
 TimeoutStartSec=300
 

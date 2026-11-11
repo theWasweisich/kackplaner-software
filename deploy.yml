@@ -166,6 +166,12 @@
             chdir: "{{ base_dest }}/notifier"
             creates: "{{ base_dest }}/notifier/.venv"
           # noqa: no-handler
+        
+        - name: Install required Packages
+          when: notifier_sync.changed
+          ansible.builtin.command: "{{ base_dest }}/notifier/.venv/bin/pip install -r requirements.txt"
+          args:
+            chdir: "{{ base_dest }}/notifier"
 
         - name: Make alert scripts executable
           when: notifier_sync.changed
