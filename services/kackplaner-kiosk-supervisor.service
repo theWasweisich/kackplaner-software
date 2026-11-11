@@ -1,6 +1,6 @@
 [Unit]
 Description=Kiosk Supervisor
-After=network.target graphical.target
+After=network.target
 
 [Service]
 Type=simple
