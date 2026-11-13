@@ -6,4 +6,4 @@ Type=oneshot
 User=user
 Group=user
 EnvironmentFile=/opt/kackplaner.env
-ExecStart=/usr/bin/python3 /opt/kackplaner/notifier/notify.py
+ExecStart=/opt/kackplaner/notifier/.venv/bin/python /opt/kackplaner/notifier/notify.py

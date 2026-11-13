@@ -1,9 +1,7 @@
-#!/usr/bin/env python3
 import logging
 import os
 import sqlite3
 import sys
-import json
 from pathlib import Path
 from typing import Optional
 
@@ -13,8 +11,8 @@ from telegram_client import send_webhook_message, WebhookResult, escape_markdown
 
 class Configuration(BaseModel):
     shittingcycle: int = 2
-    reminder_message: str = "*Achtung*: Das letzte Kackevent war bereits {} Tag(e) her\\."
-    alert_message: str = "*Hinweis*: Heute ist Kacktag! (Das letzte Kackevent war vor {} Tag(en))\\."
+    reminder_message: str = "*Hinweis*: Heute ist Kacktag! (Das letzte Kackevent war vor {} Tag(en))\\."
+    alert_message: str = "*Achtung*: Das letzte Kackevent war bereits {} Tag(e) her\\."
 
 CONFIG: Optional[Configuration] = None
 

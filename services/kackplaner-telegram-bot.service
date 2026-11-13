@@ -9,7 +9,7 @@ Group=user
 WorkingDirectory=/opt/kackplaner/notifier
 EnvironmentFile=/opt/kackplaner.env
 
-ExecStart=/opt/kackplaner/notifier/venv/bin/python /opt/kackplaner/notifier/telegram_long_polling_bot.py
+ExecStart=/opt/kackplaner/notifier/.venv/bin/python /opt/kackplaner/notifier/telegram_long_polling_bot.py
 TimeoutStartSec=300
 
 Restart=always

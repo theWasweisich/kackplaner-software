@@ -157,21 +157,32 @@
             owner: false
             group: false
             checksum: true
+            rsync_opts:
+              - "--exclude=.venv"
+              - "--exclude=.idea"
+              - "--exclude=.mypy_cache"
+              - "--exclude=.env"
+              - "--exclude=chat_ids.whitelist"
+              - "--exclude=__pycache__"
           register: notifier_sync
 
-        - name: Create Python venv
+        - name: Fix ownership
           when: notifier_sync.changed
-          ansible.builtin.command: python3 -m venv .venv
-          args:
-            chdir: "{{ base_dest }}/notifier"
-            creates: "{{ base_dest }}/notifier/.venv"
+          ansible.builtin.file:
+            path: "{{ base_dest }}/notifier"
+            owner: "{{ app_user }}"
+            group: "{{ app_user }}"
+            recurse: true
+            mode: "0755"
           # noqa: no-handler
-        
-        - name: Install required Packages
+
+        - name: Create venv and install packages
           when: notifier_sync.changed
-          ansible.builtin.command: "{{ base_dest }}/notifier/.venv/bin/pip install -r requirements.txt"
-          args:
-            chdir: "{{ base_dest }}/notifier"
+          ansible.builtin.pip:
+            requirements: "{{ base_dest }}/notifier/requirements.txt"
+            virtualenv: "{{ base_dest }}/notifier/.venv"
+            virtualenv_command: /usr/bin/python3 -m venv
+          # noqa: no-handler
 
         - name: Make alert scripts executable
           when: notifier_sync.changed
@@ -182,16 +193,6 @@
             - notify.py
             - temp.notify.py
           failed_when: false
-          # noqa: no-handler
-
-        - name: Fix ownership
-          when: notifier_sync.changed
-          ansible.builtin.file:
-            path: "{{ base_dest }}/notifier"
-            owner: "{{ app_user }}"
-            group: "{{ app_user }}"
-            recurse: true
-            mode: "0755"
           # noqa: no-handler
 
     - name: Kiosk Scripts Deployment Group
@@ -283,6 +284,7 @@
           changed_when: "'Created symlink' in link_result.stdout"
           # noqa: command-instead-of-module no-handler
 
+
         - name: Reload systemd daemon if units changed
           ansible.builtin.systemd:
             daemon_reload: true
@@ -323,3 +325,10 @@
             label: "{{ item.item }}"
           when: item.changed and item.item in active_services
           # noqa: no-handler
+
+        - name: Ensure all services are enabled
+          ansible.builtin.systemd:
+            name: "{{ item }}"
+            state: started
+            enabled: true
+          loop: "{{ active_services }}"
