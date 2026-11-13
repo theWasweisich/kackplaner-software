@@ -1,16 +1,16 @@
 import express, {type Request, type Response, type NextFunction} from 'express';
-import Database from 'better-sqlite3';
+import { drizzle } from 'drizzle-orm/libsql';
+import {and, eq, sql} from 'drizzle-orm';
+import { events as eventsTable } from './db/schema.ts';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import {exec} from "child_process";
 import path from 'path';
 import fs from 'fs';
+import 'dotenv/config';
 
-dotenv.config();
-
-const BACKEND_PORT = process.env.BACKEND_PORT || 8090;
+const BACKEND_PORT = process.env.BACKEND_PORT || "8090";
 // noinspection JSUnusedLocalSymbols
-const FRONTEND_PORT = process.env.FRONTEND_PORT || 2222;
+const FRONTEND_PORT = process.env.FRONTEND_PORT || "2222";
 const DB_PATH = process.env.DB_PATH || "database.db";
 
 const BACKLIGHT_BASE = '/sys/class/backlight/';
@@ -27,9 +27,9 @@ try {
 }
 
 
-const db = new Database(DB_PATH);
-db.pragma("journal_mode = WAL");
-db.pragma("busy_timeout = 5000");
+const db = drizzle("file:" + DB_PATH);
+db.run("journal_mode = WAL");
+db.run("busy_timeout = 5000");
 
 const app = express();
 
@@ -50,21 +50,6 @@ app.use(cors({
     allowedHeaders: ['Content-Type', 'x-client-id', 'x-timestamp', 'x-signature']
 }));
 
-const createTableSQLString = `
-    CREATE TABLE IF NOT EXISTS events (
-        id INTEGER PRIMARY KEY,
-        title TEXT,
-        start TEXT,
-        microlax INTEGER
-    );
-`
-
-try {
-    db.prepare(createTableSQLString).run();
-} catch (e) {
-    console.error(`Error during Schema creation: `, e);
-}
-
 interface NetworkEvent {
     id?: string;
     title: string;
@@ -83,34 +68,6 @@ interface KackeventPutBody {
     events: NetworkEvent[]
 }
 
-function asTransaction(func: (...args: any[]) => void): () => boolean {
-    const begin = db.prepare("BEGIN");
-    const commit = db.prepare("COMMIT");
-    const rollback = db.prepare("ROLLBACK");
-
-    return function (...args: any[]) {
-        begin.run();
-        try {
-            func(...args);
-            commit.run();
-            return true;
-        } catch (e: any) {
-            if (e instanceof Error) {
-                console.error("Error Type: ", e.name);
-                console.error("Error Message: ", e.message);
-            } else {
-                console.error("Unknown error type: ", e);
-            }
-            return false;
-        }
-        finally {
-            if (db.inTransaction) {
-                rollback.run();
-            }
-        }
-    }
-}
-
 function isValidDateString(dateString: string): boolean {
     if (typeof dateString !== "string") return false;
 
@@ -124,8 +81,8 @@ function isValidDateString(dateString: string): boolean {
 
 app.use(express.json());
 
-function networkToDbEvents(events: NetworkEvent[]): DatabaseEvent[] {
-    const dbEvents: DatabaseEvent[] = [];
+function networkToDbEvents(events: NetworkEvent[]): typeof eventsTable.$inferInsert[] {
+    const dbEvents: typeof eventsTable.$inferInsert[] = [];
 
     for (const event of events) {
         let eventId: number | undefined = parseInt(event.id ? event.id : "");
@@ -142,14 +99,14 @@ function networkToDbEvents(events: NetworkEvent[]): DatabaseEvent[] {
     return dbEvents;
 }
 
-function dbEventsToNetwork(events: DatabaseEvent[]): NetworkEvent[] {
+function dbEventsToNetwork(events: typeof eventsTable.$inferSelect[]): NetworkEvent[] {
     const networkEvents: NetworkEvent[] = [];
 
     for (const event of events) {
         networkEvents.push({
             id: String(event.id),
-            title: event.title,
-            start: event.start,
+            title: event.title ?? "",
+            start: event.start ?? "",
             microlax: event.microlax == 1
         });
     }
@@ -157,24 +114,12 @@ function dbEventsToNetwork(events: DatabaseEvent[]): NetworkEvent[] {
     return networkEvents;
 }
 
-function insertEvents(events: NetworkEvent[]) {
-    const dbEvents: DatabaseEvent[] = networkToDbEvents(events);
+async function insertEvents(events: NetworkEvent[]) {
+    const dbEvents: typeof eventsTable.$inferInsert[] = networkToDbEvents(events);
 
-    const insertStmt = db.prepare("INSERT INTO events (id, title, start, microlax) VALUES (?, ?, ?, ?)");
+    const res = await db.insert(eventsTable).values(dbEvents).returning();
 
-    const insertEvents: (events: DatabaseEvent[]) => boolean = asTransaction((events: DatabaseEvent[]) => {
-        const eventsSet = new Set(events);
-        for (const event of eventsSet) {
-            console.log("Inserting event:", event);
-            insertStmt.run(
-                event.id,
-                event.title,
-                event.start,
-                event.microlax
-            );
-        }
-    })
-    return insertEvents(dbEvents);
+    return res.length == events.length;
 }
 
 type EventsValidationFailures = 'title' | 'date' | 'id';
@@ -199,7 +144,7 @@ function validateEvents(events: NetworkEvent[]): EventsValidationResult {
     return "success";
 }
 
-app.put("/kackevent", (req: Request, res: Response) => {
+app.put("/kackevent", async (req: Request, res: Response) => {
     const putBody = req.body as KackeventPutBody;
 
     if (!("events" in putBody)) {
@@ -227,7 +172,7 @@ app.put("/kackevent", (req: Request, res: Response) => {
 
     const eventsToBeInserted = ([...putBody.events]);
 
-    const success = insertEvents(eventsToBeInserted);
+    const success = await insertEvents(eventsToBeInserted);
 
     if (success) {
         return res.status(201).json({
@@ -242,51 +187,39 @@ app.put("/kackevent", (req: Request, res: Response) => {
     })
 });
 
-function getConstrainedEvents(fromStr: string, toStr: string): DatabaseEvent[] | undefined {
-    const stmt = db.prepare(
-        `
-            SELECT
-                 id,
-                 title,
-                 start,
-                 microlax
-            FROM
-                events
-            WHERE
-                unixepoch(?) < unixepoch(start)
-              AND
-                unixepoch(?) > unixepoch(start)`
+async function getConstrainedEvents(fromStr: string, toStr: string): Promise<typeof eventsTable.$inferSelect[]> {
+    const result = await db.select().from(eventsTable).where(
+        and(
+            sql`unixepoch(${fromStr}) < unixepoch(${eventsTable.start})`,
+            sql`unixepoch(${toStr}) > unixepoch(${eventsTable.start})`,
+        )
     );
 
-    const dbRes = stmt.all(fromStr, toStr) as DatabaseEvent[];
+    console.log("DB Res (constrained):", result);
 
-    console.log("DB Res (constrained):", dbRes);
-
-    return dbRes;
+    return result;
 }
 
-function getUnconstrainedEvents(): DatabaseEvent[] {
-    const stmt = db.prepare("SELECT id, title, start, microlax FROM events");
-
-    const dbRes = stmt.all() as DatabaseEvent[];
+async function getUnconstrainedEvents(): Promise<typeof eventsTable.$inferSelect[]> {
+    const dbRes = await db.select().from(eventsTable);
 
     console.log("DB Res (unconstrained):", dbRes);
 
     return dbRes;
 }
 
-function getEvents(fromStr?: string, toStr?: string): NetworkEvent[] | undefined {
+async function getEvents(fromStr?: string, toStr?: string): Promise<NetworkEvent[] | undefined> {
     if (fromStr != undefined && toStr == undefined) return;
 
     if (fromStr !== undefined && toStr !== undefined) {
-        const dbEvents = getConstrainedEvents(fromStr, toStr);
+        const dbEvents = await getConstrainedEvents(fromStr, toStr);
         if (dbEvents === undefined) {
             return undefined;
         }
         return dbEventsToNetwork(dbEvents);
     }
 
-    const dbRes: DatabaseEvent[] = getUnconstrainedEvents() as DatabaseEvent[];
+    const dbRes = await getUnconstrainedEvents();
 
     return dbEventsToNetwork(dbRes);
 }
@@ -296,9 +229,13 @@ function cleanDateStringInput(input: string): string {
     return input.substring(0, 10);
 }
 
-app.get("/kackevent", (req: Request, res: Response) => {
+app.get("/kackevent", async (req: Request, res: Response) => {
     const startStr = req.query.start;
     const endStr = req.query.end;
+
+    if (startStr === undefined && endStr === undefined) {
+
+    }
 
     if (startStr === undefined || endStr === undefined) {
         return res.status(401).json({
@@ -318,29 +255,41 @@ app.get("/kackevent", (req: Request, res: Response) => {
         return;
     }
 
-    const dbRes = getEvents(cleanStart, cleanEnd);
+    const dbRes = await getEvents(cleanStart, cleanEnd) ?? [];
 
-    if (dbRes === undefined) return res.status(500).json({ error: '?', start: startStr, end: endStr });
+    if (dbRes.length === 0) {
+        console.log(`No events found between ${startStr} and ${endStr}`);
+    }
 
     res.json({
+        "start": startStr,
+        "end": endStr,
         "events": dbRes
-    })
+    });
 });
 
 app.get("/kackevent/dump", async (req: Request, res: Response) => {
-    const dbRes = getEvents();
-    if (dbRes === undefined) return res.sendStatus(500);
+    const dbRes = await getEvents();
+    if (dbRes === undefined) return res.sendStatus(204);
     return res.json({
         'events': dbRes
-    })
+    });
 })
 
-function doesDateExist(dateStr: string) {
-    const stmt = db.prepare("SELECT id FROM events WHERE unixepoch(start) == unixepoch(?)")
-    return stmt.get(dateStr) !== undefined;
+async function doesDateExist(dateStr: string) {
+    const dbRes = await db
+        .select({id: eventsTable.id})
+        .from(eventsTable)
+        .where(
+            eq(
+                sql`unixepoch(${eventsTable.start})`,
+                sql`unixepoch(${dateStr})`
+            )
+        );
+    return dbRes.length > 0;
 }
 
-app.delete("/kackevent", (req: Request, res: Response) => {
+app.delete("/kackevent", async (req: Request, res: Response) => {
     const dateQuery = req.query.date;
 
     const dateStr = typeof dateQuery === 'string' ? dateQuery.substring(0, 10) : "";
@@ -349,20 +298,16 @@ app.delete("/kackevent", (req: Request, res: Response) => {
         res.status(400).json({ error: "Invalid date format", date: dateQuery });
     }
 
-    const dateExists: boolean = doesDateExist(dateStr);
+    const dateExists: boolean = await doesDateExist(dateStr);
 
     if (!dateExists) {
         res.status(404).json({ error: "This date does not exist!", date: dateQuery });
         return;
     }
 
-    const deleteStmt = db.prepare(
-        "DELETE FROM events WHERE unixepoch(start) == unixepoch(?)",
-    );
+    const dbRes = await db.delete(eventsTable).where(eq(sql`unixepoch(${eventsTable.start})`, sql`unixepoch(${dateStr})`));
 
-    const dbRes = deleteStmt.run(dateStr);
-
-    if (dbRes.changes && dbRes.changes == 1) {
+    if (dbRes.rowsAffected == 1) {
         res.status(200).send();
     } else {
         res.status(500).send();
