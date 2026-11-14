@@ -1,17 +1,44 @@
 import express, {type Request, type Response, type NextFunction} from 'express';
-import { drizzle } from 'drizzle-orm/libsql';
-import {and, eq, sql} from 'drizzle-orm';
+import {and, asc, eq, SQL, sql} from 'drizzle-orm';
 import { events as eventsTable } from './db/schema.ts';
 import cors from 'cors';
 import {exec} from "child_process";
 import path from 'path';
 import fs from 'fs';
+import winston from 'winston';
+import client from 'prom-client';
+import db from './db/database.ts';
 import 'dotenv/config';
 
+const httpRequestDuration = new client.Histogram({
+    name: "http_request_duration_seconds",
+    help: "Duration of the HTTP requests in seconds",
+    labelNames: ["method", "route"]
+});
+
+function startMonitoring(req: Request, res: Response, next: NextFunction) {
+    const end = httpRequestDuration.startTimer();
+    res.on("finish", () => {
+        const routeStr = req.route ? req.route.path : req.path;
+        end({method: req.method, route: routeStr});
+    });
+    next();
+}
+
+const logger = winston.createLogger({
+    level: "debug",
+    format: winston.format.combine(
+        winston.format.timestamp(),
+        winston.format.json()
+    ),
+    transports: [
+        new winston.transports.Console(),
+        new winston.transports.File({ filename: "app.log" })
+    ],
+});
+
 const BACKEND_PORT = process.env.BACKEND_PORT || "8090";
-// noinspection JSUnusedLocalSymbols
-const FRONTEND_PORT = process.env.FRONTEND_PORT || "2222";
-const DB_PATH = process.env.DB_PATH || "database.db";
+const FRONTEND_PORT = process.env.FRONTEND_PORT || "5173";
 
 const BACKLIGHT_BASE = '/sys/class/backlight/';
 let brightnessFile: string | null = null;
@@ -20,18 +47,21 @@ try {
     const folders = fs.readdirSync(BACKLIGHT_BASE);
     if (folders.length > 0) {
         brightnessFile = path.join(BACKLIGHT_BASE, folders[0], 'brightness');
-        console.log(`[Display] Bound to backlight file: ${brightnessFile}`);
+        logger.info(`[Display] Bound to backlight file: ${brightnessFile}`);
     }
 } catch (e) {
-    console.error("Could not find brightness file!");
+    logger.error("Could not find brightness file!");
 }
 
-
-const db = drizzle("file:" + DB_PATH);
-db.run("journal_mode = WAL");
-db.run("busy_timeout = 5000");
-
 const app = express();
+app.use(startMonitoring);
+
+app.use((req: Request, res: Response, next: NextFunction) => {
+    req.logger = logger.child({
+        requestId: req.headers["x-request-id"] || crypto.randomUUID(),
+    });
+    next();
+})
 
 const allowedOrigins = [
     `http://localhost:${FRONTEND_PORT}`,
@@ -57,12 +87,10 @@ interface NetworkEvent {
     microlax?: boolean;
 }
 
-interface DatabaseEvent {
-    id?: number;
-    title: string;
-    start: string;
-    microlax: number;
-}
+app.get("/metrics", async (req, res) => {
+    res.set("Content-Type", client.register.contentType);
+    res.end(await client.register.metrics());
+})
 
 interface KackeventPutBody {
     events: NetworkEvent[]
@@ -71,12 +99,13 @@ interface KackeventPutBody {
 function isValidDateString(dateString: string): boolean {
     if (typeof dateString !== "string") return false;
 
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateString)) return false;
+    const isoRegex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/;
+    if (!isoRegex.test(dateString)) return false;
 
     const date = new Date(dateString);
     if (isNaN(date.getTime())) return false;
 
-    return date.toISOString().substring(0, 10) === dateString;
+    return date.toISOString() === dateString;
 }
 
 app.use(express.json());
@@ -144,7 +173,7 @@ function validateEvents(events: NetworkEvent[]): EventsValidationResult {
     return "success";
 }
 
-app.put("/kackevent", async (req: Request, res: Response) => {
+app.post("/kackevent", async (req: Request, res: Response) => {
     const putBody = req.body as KackeventPutBody;
 
     if (!("events" in putBody)) {
@@ -179,7 +208,7 @@ app.put("/kackevent", async (req: Request, res: Response) => {
             "events": eventsToBeInserted
         });
     } else {
-        console.error("There was an error while inserting events. Rollback occurred");
+        logger.error("There was an error while inserting events. Rollback occurred");
     }
 
     return res.status(400).json({
@@ -187,83 +216,54 @@ app.put("/kackevent", async (req: Request, res: Response) => {
     })
 });
 
-async function getConstrainedEvents(fromStr: string, toStr: string): Promise<typeof eventsTable.$inferSelect[]> {
-    const result = await db.select().from(eventsTable).where(
-        and(
-            sql`unixepoch(${fromStr}) < unixepoch(${eventsTable.start})`,
-            sql`unixepoch(${toStr}) > unixepoch(${eventsTable.start})`,
-        )
-    );
-
-    console.log("DB Res (constrained):", result);
-
-    return result;
-}
-
-async function getUnconstrainedEvents(): Promise<typeof eventsTable.$inferSelect[]> {
-    const dbRes = await db.select().from(eventsTable);
-
-    console.log("DB Res (unconstrained):", dbRes);
-
-    return dbRes;
-}
-
 async function getEvents(fromStr?: string, toStr?: string): Promise<NetworkEvent[] | undefined> {
-    if (fromStr != undefined && toStr == undefined) return;
+    const filters: SQL[] = [];
+    if (fromStr) filters.push(sql`unixepoch(${eventsTable.start}) > unixepoch(${fromStr})`);
+    if (toStr) filters.push(sql`unixepoch(${eventsTable.start}) < unixepoch(${toStr})`);
 
-    if (fromStr !== undefined && toStr !== undefined) {
-        const dbEvents = await getConstrainedEvents(fromStr, toStr);
-        if (dbEvents === undefined) {
-            return undefined;
-        }
-        return dbEventsToNetwork(dbEvents);
-    }
+    logger.debug(`Getting events with ${filters.length} filters`, {
+        from: fromStr,
+        to: toStr
+    });
 
-    const dbRes = await getUnconstrainedEvents();
-
-    return dbEventsToNetwork(dbRes);
+    return dbEventsToNetwork(
+        await db
+            .select()
+            .from(eventsTable)
+            .where(and(...filters))
+            .orderBy(
+                asc(sql`unixepoch(${eventsTable.start})`)
+            )
+    );
 }
 
 function cleanDateStringInput(input: string): string {
     if (typeof input !== "string") return "";
-    return input.substring(0, 10);
+    return input;
 }
 
 app.get("/kackevent", async (req: Request, res: Response) => {
     const startStr = req.query.start;
     const endStr = req.query.end;
 
-    if (startStr === undefined && endStr === undefined) {
+    let cleanStart: string | undefined;
+    let cleanEnd: string | undefined;
 
-    }
+    if (typeof startStr === "string") cleanStart = cleanDateStringInput(startStr);
+    if (typeof endStr === "string") cleanEnd = cleanDateStringInput(endStr);
 
-    if (startStr === undefined || endStr === undefined) {
-        return res.status(401).json({
-            error: "Expected two query parameters: start and end"
-        });
-    }
-
-    if (typeof startStr !== "string" || typeof endStr !== "string") {
-        return res.sendStatus(500);
-    }
-
-    const cleanStart = cleanDateStringInput(startStr);
-    const cleanEnd = cleanDateStringInput(endStr);
-
-    if (!isValidDateString(cleanStart) || !isValidDateString(cleanEnd)) {
-        res.status(400).json({ error: "Invalid date format", start: startStr, end: endStr });
-        return;
-    }
+    if ((cleanStart && !isValidDateString(cleanStart)) || (cleanEnd && !isValidDateString(cleanEnd)))
+        return res.status(400).json({ error: "Invalid date format", start: startStr, end: endStr});
 
     const dbRes = await getEvents(cleanStart, cleanEnd) ?? [];
 
     if (dbRes.length === 0) {
-        console.log(`No events found between ${startStr} and ${endStr}`);
+        logger.warn(`No events found between ${startStr} and ${endStr}`);
     }
 
-    res.json({
-        "start": startStr,
-        "end": endStr,
+    return res.json({
+        "start": dbRes.length > 0 ? dbRes[0].start : undefined,
+        "end": dbRes.length > 0 ? dbRes[dbRes.length - 1].start : undefined,
         "events": dbRes
     });
 });
@@ -292,10 +292,10 @@ async function doesDateExist(dateStr: string) {
 app.delete("/kackevent", async (req: Request, res: Response) => {
     const dateQuery = req.query.date;
 
-    const dateStr = typeof dateQuery === 'string' ? dateQuery.substring(0, 10) : "";
+    const dateStr = typeof dateQuery === 'string' ? dateQuery : "";
 
     if (!isValidDateString(dateStr)) {
-        res.status(400).json({ error: "Invalid date format", date: dateQuery });
+        return res.status(400).json({ error: "Invalid date format", date: dateQuery });
     }
 
     const dateExists: boolean = await doesDateExist(dateStr);
@@ -315,13 +315,13 @@ app.delete("/kackevent", async (req: Request, res: Response) => {
 })
 
 app.post('/shutdown', (req: Request, res: Response) => {
-    console.log("Shutdown requested via API endpoint");
+    logger.info("Shutdown requested via API endpoint");
     res.status(200).json({ message: "Shutting down..." });
 
     setTimeout(() => {
         exec('sudo /bin/systemctl poweroff', (error) => {
             if (error) {
-                console.error(`Shutdown failed: ${error.message}`);
+                logger.error(`Shutdown failed: ${error.message}`);
             }
         })
     }, 1000);
@@ -333,7 +333,7 @@ app.post("/reboot", (req: Request, res: Response) => {
     setTimeout(() => {
         exec('sudo systemctl reboot', (error) => {
             if (error) {
-                console.error("Reboot failed:", error);
+                logger.error("Reboot failed:", error);
             }
         });
     }, 1000)
@@ -343,7 +343,7 @@ function setScreenBrightness(brightness: number): boolean {
     if (typeof brightness !== "number") return false;
     if (brightness > 255 || brightness < 0) { return false; }
     if (!brightnessFile) {
-        console.error("No brightness file found.");
+        logger.error("No brightness file found.");
         return false;
     }
 
@@ -351,7 +351,7 @@ function setScreenBrightness(brightness: number): boolean {
         fs.writeFileSync(brightnessFile, brightness.toString(), 'utf-8');
         return true;
     } catch (err) {
-        console.error(`Error setting screen brightness:`, err);
+        logger.error(`Error setting screen brightness:`, err);
         return false;
     }
 }
@@ -375,13 +375,19 @@ app.post("/display/brightness", (req, res) => {
     }
 });
 
-app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
-    console.error("Unhandled Error:", err);
+app.use((err: Error, req: Request, res: Response) => {
+    logger.error("Unhandled Error:", err);
     res.status(500);
     res.send();
 })
 
-app.listen(BACKEND_PORT, () => {
+const server = app.listen(BACKEND_PORT, () => {
     // noinspection HttpUrlsUsage
-    console.log(`Listening on http://[::1]:${BACKEND_PORT}`);
+    logger.info(`Listening on http://[::1]:${BACKEND_PORT}`);
 });
+
+process.on("SIGTERM", () => {
+    server.close(async () => {
+        process.exit(0);
+    })
+})

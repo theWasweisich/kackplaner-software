@@ -3,11 +3,16 @@
   hosts: kiosk
   become: true
 
+  vars_files:
+    - secrets.yml
+
   vars:
     app_name: "kackplaner"
     app_user: "user"
     base_dest: "/opt/{{ app_name }}"
+    master_db_path: "{{ base_dest }}/data/database.db"
     master_env: "/opt/{{ app_name }}.env"
+    backend_port: 8090
 
     active_services:
       - "{{ app_name }}-external.service"
@@ -31,15 +36,23 @@
         - "{{ app_name }}-telegram-bot.service"
       kiosk_scripts:
         - "{{ app_name }}-kiosk-supervisor.service"
+      prometheus:
+        - "prometheus.service"
+      grafana:
+        - "grafana-server.service"
+      promtail:
+        - "promtail.service"
 
   tasks:
     - name: Prerequisites and Setup Group
       block:
-        - name: Verify master config exists
-          ansible.builtin.stat:
-            path: "{{ master_env }}"
-          register: master_env_stat
-          failed_when: not master_env_stat.stat.exists
+        - name: Generate master .env file
+          ansible.builtin.template:
+            src: "{{ playbook_dir }}/templates/kackplaner.env.j2"
+            dest: "{{ master_env }}"
+            owner: "{{ app_user }}"
+            group: "{{ app_user }}"
+            mode: "0644"
 
         - name: Resolve NVM path for {{ app_user }}
           ansible.builtin.shell: "source ~/.nvm/nvm.sh && nvm which current"
@@ -83,6 +96,7 @@
             rsync_opts:
               - "--exclude=node_modules"
           register: external_sync
+          notify: "Restart External"
 
         - name: Pi Build - Install ARM-compatible Node modules
           when: external_sync.changed
@@ -126,6 +140,7 @@
             rsync_opts:
               - "--exclude=node_modules"
           register: backend_sync
+          notify: "Restart Backend"
 
         - name: Pi Build - Install ARM-compatible Node modules
           when: backend_sync.changed
@@ -165,6 +180,7 @@
               - "--exclude=chat_ids.whitelist"
               - "--exclude=__pycache__"
           register: notifier_sync
+          notify: "Restart Notifier"
 
         - name: Fix ownership
           when: notifier_sync.changed
@@ -206,6 +222,7 @@
             group: false
             checksum: true
           register: kiosk_scripts_sync
+          notify: "Restart Kiosk Scripts"
 
         - name: Make scripts executable and fix ownership
           when: kiosk_scripts_sync.changed
@@ -219,12 +236,6 @@
 
     - name: Frontend Deployment Group
       block:
-        - name: Download master .env from Pi for local build
-          ansible.builtin.fetch:
-            src: "{{ master_env }}"
-            dest: "{{ playbook_dir }}/frontend/.env"
-            flat: true
-
         - name: Local Build - Compile Frontend
           delegate_to: localhost
           become: false
@@ -232,6 +243,8 @@
           args:
             executable: /bin/bash
             chdir: "{{ playbook_dir }}/frontend"
+          environment:
+            VITE_BACKEND_PORT: "{{ backend_port }}"
           # noqa: no-changed-when
 
         - name: Ensure final dist directory exists on Pi
@@ -251,6 +264,7 @@
             group: false
             checksum: true
           register: frontend_sync
+          notify: "Restart Frontend"
 
         - name: Fix ownership of final dist
           when: frontend_sync.changed
@@ -261,6 +275,100 @@
             recurse: true
             mode: "0755"
           # noqa: no-handler
+
+    - name: "Prometheus Deployment Group"
+      block:
+        - name: Install Prometheus
+          ansible.builtin.apt:
+            name: prometheus
+            state: present
+            update_cache: true
+
+        - name: Push Prometheus configuration
+          ansible.builtin.copy:
+            src: "{{ playbook_dir }}/prometheus/prometheus.yml"
+            dest: "/etc/prometheus/prometheus.yml"
+            owner: prometheus
+            group: prometheus
+            mode: "0644"
+          register: prometheus_sync
+          notify: "Restart Prometheus"
+
+    - name: Grafana Deployment Group
+      block:
+        - name: Ensure keyrings directory exists
+          ansible.builtin.file:
+            path: /etc/apt/keyrings
+            state: directory
+            mode: '0755'
+
+        - name: Add Grafana GPG key
+          ansible.builtin.get_url:
+            url: https://apt.grafana.com/gpg.key
+            dest: /etc/apt/keyrings/grafana.key
+            mode: '0644'
+
+        - name: Add Grafana repository
+          ansible.builtin.apt_repository:
+            repo: "deb [signed-by=/etc/apt/keyrings/grafana.key] https://apt.grafana.com stable main"
+            state: present
+            update_cache: true
+
+        - name: Install Grafana via APT
+          ansible.builtin.apt:
+            name: grafana
+            state: present
+
+        - name: Push Grafana configuration override
+          ansible.builtin.copy:
+            src: "{{ playbook_dir }}/grafana/grafana.ini"
+            dest: "/etc/grafana/grafana.ini"
+            owner: grafana
+            group: grafana
+            mode: "0644"
+          register: grafana_sync
+          notify: "Restart Grafana"
+
+        - name: Push Grafana provisioning files
+          ansible.posix.synchronize:
+            src: "{{ playbook_dir }}/grafana/provisioning/"
+            dest: "/etc/grafana/provisioning/"
+            delete: true
+            owner: false
+            group: false
+            checksum: true
+          register: grafana_provisioning_sync
+          notify: "Restart Grafana"
+
+    - name: Loki and Promtail Deployment Group
+      block:
+        - name: Install Loki and Promtail via APT
+          ansible.builtin.apt:
+            name:
+              - loki
+              - promtail
+            state: present
+        
+        - name: Ensure promtail group exists
+          ansible.builtin.group:
+            name: promtail
+            system: true
+
+        - name: Add promtail user to systemd-journal group
+          ansible.builtin.user:
+            name: promtail
+            groups: systemd-journal
+            append: true
+
+        - name: Push Promtail configuration
+          ansible.builtin.copy:
+            src: "{{ playbook_dir }}/promtail/promtail-config.yaml"
+            dest: "/etc/promtail/config.yml"
+            owner: promtail
+            group: promtail
+            mode: "0644"
+          register: promtail_sync
+          notify: "Restart Promtail"
 
     - name: Systemd Services and Startup Group
       block:
@@ -283,7 +391,6 @@
           register: link_result
           changed_when: "'Created symlink' in link_result.stdout"
           # noqa: command-instead-of-module no-handler
-
 
         - name: Reload systemd daemon if units changed
           ansible.builtin.systemd:
@@ -316,6 +423,20 @@
           when: kiosk_scripts_sync.changed
           # noqa: no-handler
 
+        - name: Restart Prometheus
+          ansible.builtin.command: "systemctl restart {{ restart_triggers.prometheus | join(' ') }}"
+          when: prometheus_sync.changed
+          # noqa: no-handler
+
+        - name: Restart Grafana
+          ansible.builtin.command: "systemctl restart {{ restart_triggers.grafana | join(' ') }}"
+          when: grafana_sync.changed or grafana_provisioning_sync.changed
+
+        - name: Restart Promtail
+          ansible.builtin.command: "systemctl restart {{ restart_triggers.promtail | join(' ') }}"
+          when: promtail_sync.changed
+          # noqa: command-instead-of-module no-handler
+
         - name: Restart any service whose unit file changed
           ansible.builtin.systemd:
             name: "{{ item.item }}"
@@ -332,3 +453,11 @@
             state: started
             enabled: true
           loop: "{{ active_services }}"
+
+  handlers:
+    - name: "Restart External"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: restarted
+      loop: "{{ restart_triggers.external }}"
+      ignore_errors: true

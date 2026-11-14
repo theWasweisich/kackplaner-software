@@ -43,7 +43,7 @@ function Kackkalender() {
     const createTimeout = useRef<number | null>(null)
 
     const handleDatesSet = async (dateInfo: DatesSetInfo) => {
-        const fetchedEvents = await fetchEvents(dateInfo.startStr, dateInfo.endStr)
+        const fetchedEvents = await fetchEvents(dateInfo.start, dateInfo.end)
         if (fetchedEvents && fetchedEvents.length > 0) {
             const calendarEvents: CalendarEvent[] = fetchedEvents.map(formatNetworkEvent)
             setEvents(calendarEvents)
@@ -73,10 +73,11 @@ function Kackkalender() {
     }
 
     const handleDateClick = async (arg: DateClickInfo) => {
-        const clickedDateStr = arg.dateStr;
+        const clickedDate = arg.date;
 
         const eventIndex: number = events.findIndex((event: CalendarEvent) => {
-            return event.start === clickedDateStr;
+            const eventDate = new Date(event.start);
+            return eventDate.toDateString() === clickedDate.toDateString();
         });
 
         if (eventIndex !== -1) {
@@ -91,13 +92,13 @@ function Kackkalender() {
             cancelText: 'Nein'
         });
 
-        addEvent(arg.dateStr, microlax);
+        addEvent(arg.date, microlax);
     }
 
-    const addEvent = (startDateStr: string, microlax: boolean) => {
+    const addEvent = (startDate: Date, microlax: boolean) => {
         const newEvent: CalendarEvent = {
             title: EVENT_ICON,
-            start: startDateStr,
+            start: startDate.toISOString(),
             allDay: true,
             microlax: microlax,
             color: microlax ? EVENT_MICROLAX_COLOR : EVENT_COLOR,

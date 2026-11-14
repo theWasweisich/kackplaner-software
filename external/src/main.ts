@@ -2,7 +2,7 @@ import requireHmacAuth from './hmacAuthMiddleware.ts'
 import Database from "better-sqlite3";
 import express, { type Request, type Response } from "express";
 import cors from 'cors';
-import dotenv from "dotenv";
+import 'dotenv/config'
 
 interface NetworkEvent {
     id?: string;
@@ -10,8 +10,6 @@ interface NetworkEvent {
     start: string;
     microlax?: boolean;
 }
-
-dotenv.config();
 
 const EXTERNAL_PORT = parseInt(process.env.EXTERNAL_PORT as string) || 8090;
 const EXTERNAL_INTERFACE = "::";

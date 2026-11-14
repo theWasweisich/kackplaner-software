@@ -19,11 +19,11 @@ export interface CalendarEvent {
 const backendPort: number = import.meta.env.VITE_BACKEND_PORT || 8090;
 const baseUrl: string = `http://localhost:${backendPort}`;
 
-export async function fetchEvents(startStr: string, endStr: string): Promise<NetworkEvent[]> {
+export async function fetchEvents(start: Date, end: Date): Promise<NetworkEvent[]> {
   let events: NetworkEvent[] = [];
   try {
-    console.log(`[API] Fetching events from: /get?start=${startStr}&end=${endStr}`);
-    const res: Response = await fetch(baseUrl + `/kackevent?start=${startStr}&end=${endStr}`);
+    console.log(`[API] Fetching events from: /get?start=${start.toISOString()}&end=${end.toISOString()}`);
+    const res: Response = await fetch(baseUrl + `/kackevent?start=${start.toISOString()}&end=${end.toISOString()}`);
     if (!res.ok) {
       console.error(`Server error: ${res.status} (${res.statusText})`);
       return events;
@@ -40,7 +40,7 @@ export async function createEvents(events: NetworkEvent[]): Promise<NetworkEvent
   try {
     console.log("[API] Sending buffered creations to /create:", events);
     const res = await fetch(baseUrl + "/kackevent", {
-      method: "PUT",
+      method: "POST",
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ events }),
     });

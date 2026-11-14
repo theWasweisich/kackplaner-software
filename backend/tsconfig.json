@@ -9,5 +9,8 @@
   },
   "include": ["src/**/*.ts",
     "src/main.ts"
+  ],
+  "files": [
+    "src/custom.d.ts"
   ]
 }

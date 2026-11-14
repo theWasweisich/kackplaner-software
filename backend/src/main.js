@@ -1,31 +1,57 @@
 import express, {} from 'express';
-import Database from 'better-sqlite3';
+import { and, asc, eq, SQL, sql } from 'drizzle-orm';
+import { events as eventsTable } from './db/schema.js';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import { exec } from "child_process";
 import path from 'path';
 import fs from 'fs';
-dotenv.config();
-const BACKEND_PORT = process.env.BACKEND_PORT || 8090;
-// noinspection JSUnusedLocalSymbols
-const FRONTEND_PORT = process.env.FRONTEND_PORT || 2222;
-const DB_PATH = process.env.DB_PATH || "database.db";
+import winston from 'winston';
+import client from 'prom-client';
+import db from './db/database.js';
+import 'dotenv/config';
+const httpRequestDuration = new client.Histogram({
+    name: "http_request_duration_seconds",
+    help: "Duration of the HTTP requests in seconds",
+    labelNames: ["method", "route"]
+});
+function startMonitoring(req, res, next) {
+    const end = httpRequestDuration.startTimer();
+    res.on("finish", () => {
+        const routeStr = req.route ? req.route.path : req.path;
+        end({ method: req.method, route: routeStr });
+    });
+    next();
+}
+const logger = winston.createLogger({
+    level: "debug",
+    format: winston.format.combine(winston.format.timestamp(), winston.format.json()),
+    transports: [
+        new winston.transports.Console(),
+        new winston.transports.File({ filename: "app.log" })
+    ],
+});
+const BACKEND_PORT = process.env.BACKEND_PORT || "8090";
+const FRONTEND_PORT = process.env.FRONTEND_PORT || "5173";
 const BACKLIGHT_BASE = '/sys/class/backlight/';
 let brightnessFile = null;
 try {
     const folders = fs.readdirSync(BACKLIGHT_BASE);
     if (folders.length > 0) {
         brightnessFile = path.join(BACKLIGHT_BASE, folders[0], 'brightness');
-        console.log(`[Display] Bound to backlight file: ${brightnessFile}`);
+        logger.info(`[Display] Bound to backlight file: ${brightnessFile}`);
     }
 }
 catch (e) {
-    console.error("Could not find brightness file!");
+    logger.error("Could not find brightness file!");
 }
-const db = new Database(DB_PATH);
-db.pragma("journal_mode = WAL");
-db.pragma("busy_timeout = 5000");
 const app = express();
+app.use(startMonitoring);
+app.use((req, res, next) => {
+    req.logger = logger.child({
+        requestId: req.headers["x-request-id"] || crypto.randomUUID(),
+    });
+    next();
+});
 const allowedOrigins = [
     `http://localhost:${FRONTEND_PORT}`,
     `http://127.0.0.1:${FRONTEND_PORT}`,
@@ -42,57 +68,20 @@ app.use(cors({
     methods: ["GET", "POST", "PUT", "DELETE"],
     allowedHeaders: ['Content-Type', 'x-client-id', 'x-timestamp', 'x-signature']
 }));
-const createTableSQLString = `
-    CREATE TABLE IF NOT EXISTS events (
-        id INTEGER PRIMARY KEY,
-        title TEXT,
-        start TEXT,
-        microlax INTEGER
-    );
-`;
-try {
-    db.prepare(createTableSQLString).run();
-}
-catch (e) {
-    console.error(`Error during Schema creation: `, e);
-}
-function asTransaction(func) {
-    const begin = db.prepare("BEGIN");
-    const commit = db.prepare("COMMIT");
-    const rollback = db.prepare("ROLLBACK");
-    return function (...args) {
-        begin.run();
-        try {
-            func(...args);
-            commit.run();
-            return true;
-        }
-        catch (e) {
-            if (e instanceof Error) {
-                console.error("Error Type: ", e.name);
-                console.error("Error Message: ", e.message);
-            }
-            else {
-                console.error("Unknown error type: ", e);
-            }
-            return false;
-        }
-        finally {
-            if (db.inTransaction) {
-                rollback.run();
-            }
-        }
-    };
-}
+app.get("/metrics", async (req, res) => {
+    res.set("Content-Type", client.register.contentType);
+    res.end(await client.register.metrics());
+});
 function isValidDateString(dateString) {
     if (typeof dateString !== "string")
         return false;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateString))
+    const isoRegex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/;
+    if (!isoRegex.test(dateString))
         return false;
     const date = new Date(dateString);
     if (isNaN(date.getTime()))
         return false;
-    return date.toISOString().substring(0, 10) === dateString;
+    return date.toISOString() === dateString;
 }
 app.use(express.json());
 function networkToDbEvents(events) {
@@ -116,24 +105,17 @@ function dbEventsToNetwork(events) {
     for (const event of events) {
         networkEvents.push({
             id: String(event.id),
-            title: event.title,
-            start: event.start,
+            title: event.title ?? "",
+            start: event.start ?? "",
             microlax: event.microlax == 1
         });
     }
     return networkEvents;
 }
-function insertEvents(events) {
+async function insertEvents(events) {
     const dbEvents = networkToDbEvents(events);
-    const insertStmt = db.prepare("INSERT INTO events (id, title, start, microlax) VALUES (?, ?, ?, ?)");
-    const insertEvents = asTransaction((events) => {
-        const eventsSet = new Set(events);
-        for (const event of eventsSet) {
-            console.log("Inserting event:", event);
-            insertStmt.run(event.id, event.title, event.start, event.microlax);
-        }
-    });
-    return insertEvents(dbEvents);
+    const res = await db.insert(eventsTable).values(dbEvents).returning();
+    return res.length == events.length;
 }
 function validateEvents(events) {
     for (const event of events) {
@@ -152,7 +134,7 @@ function validateEvents(events) {
     }
     return "success";
 }
-app.put("/kackevent", (req, res) => {
+app.post("/kackevent", async (req, res) => {
     const putBody = req.body;
     if (!("events" in putBody)) {
         return res.status(401).json({
@@ -175,110 +157,89 @@ app.put("/kackevent", (req, res) => {
         return res.sendStatus(500);
     }
     const eventsToBeInserted = ([...putBody.events]);
-    const success = insertEvents(eventsToBeInserted);
+    const success = await insertEvents(eventsToBeInserted);
     if (success) {
         return res.status(201).json({
             "events": eventsToBeInserted
         });
     }
     else {
-        console.error("There was an error while inserting events. Rollback occurred");
+        logger.error("There was an error while inserting events. Rollback occurred");
     }
     return res.status(400).json({
         "events": putBody.events
     });
 });
-function getConstrainedEvents(fromStr, toStr) {
-    const stmt = db.prepare(`
-            SELECT
-                 id,
-                 title,
-                 start,
-                 microlax
-            FROM
-                events
-            WHERE
-                unixepoch(?) < unixepoch(start)
-              AND
-                unixepoch(?) > unixepoch(start)`);
-    const dbRes = stmt.all(fromStr, toStr);
-    console.log("DB Res (constrained):", dbRes);
-    return dbRes;
-}
-function getUnconstrainedEvents() {
-    const stmt = db.prepare("SELECT id, title, start, microlax FROM events");
-    const dbRes = stmt.all();
-    console.log("DB Res (unconstrained):", dbRes);
-    return dbRes;
-}
-function getEvents(fromStr, toStr) {
-    if (fromStr != undefined && toStr == undefined)
-        return;
-    if (fromStr !== undefined && toStr !== undefined) {
-        const dbEvents = getConstrainedEvents(fromStr, toStr);
-        if (dbEvents === undefined) {
-            return undefined;
-        }
-        return dbEventsToNetwork(dbEvents);
-    }
-    const dbRes = getUnconstrainedEvents();
-    return dbEventsToNetwork(dbRes);
+async function getEvents(fromStr, toStr) {
+    const filters = [];
+    if (fromStr)
+        filters.push(sql `unixepoch(${eventsTable.start}) > unixepoch(${fromStr})`);
+    if (toStr)
+        filters.push(sql `unixepoch(${eventsTable.start}) < unixepoch(${toStr})`);
+    logger.debug(`Getting events with ${filters.length} filters`, {
+        from: fromStr,
+        to: toStr
+    });
+    return dbEventsToNetwork(await db
+        .select()
+        .from(eventsTable)
+        .where(and(...filters))
+        .orderBy(asc(sql `unixepoch(${eventsTable.start})`)));
 }
 function cleanDateStringInput(input) {
     if (typeof input !== "string")
         return "";
-    return input.substring(0, 10);
+    return input;
 }
-app.get("/kackevent", (req, res) => {
+app.get("/kackevent", async (req, res) => {
     const startStr = req.query.start;
     const endStr = req.query.end;
-    if (startStr === undefined || endStr === undefined) {
-        return res.status(401).json({
-            error: "Expected two query parameters: start and end"
-        });
+    let cleanStart;
+    let cleanEnd;
+    if (typeof startStr === "string")
+        cleanStart = cleanDateStringInput(startStr);
+    if (typeof endStr === "string")
+        cleanEnd = cleanDateStringInput(endStr);
+    if ((cleanStart && !isValidDateString(cleanStart)) || (cleanEnd && !isValidDateString(cleanEnd)))
+        return res.status(400).json({ error: "Invalid date format", start: startStr, end: endStr });
+    const dbRes = await getEvents(cleanStart, cleanEnd) ?? [];
+    if (dbRes.length === 0) {
+        logger.warn(`No events found between ${startStr} and ${endStr}`);
     }
-    if (typeof startStr !== "string" || typeof endStr !== "string") {
-        return res.sendStatus(500);
-    }
-    const cleanStart = cleanDateStringInput(startStr);
-    const cleanEnd = cleanDateStringInput(endStr);
-    if (!isValidDateString(cleanStart) || !isValidDateString(cleanEnd)) {
-        res.status(400).json({ error: "Invalid date format", start: startStr, end: endStr });
-        return;
-    }
-    const dbRes = getEvents(cleanStart, cleanEnd);
-    if (dbRes === undefined)
-        return res.status(500).json({ error: '?', start: startStr, end: endStr });
-    res.json({
+    return res.json({
+        "start": dbRes.length > 0 ? dbRes[0].start : undefined,
+        "end": dbRes.length > 0 ? dbRes[dbRes.length - 1].start : undefined,
         "events": dbRes
     });
 });
 app.get("/kackevent/dump", async (req, res) => {
-    const dbRes = getEvents();
+    const dbRes = await getEvents();
     if (dbRes === undefined)
-        return res.sendStatus(500);
+        return res.sendStatus(204);
     return res.json({
         'events': dbRes
     });
 });
-function doesDateExist(dateStr) {
-    const stmt = db.prepare("SELECT id FROM events WHERE unixepoch(start) == unixepoch(?)");
-    return stmt.get(dateStr) !== undefined;
+async function doesDateExist(dateStr) {
+    const dbRes = await db
+        .select({ id: eventsTable.id })
+        .from(eventsTable)
+        .where(eq(sql `unixepoch(${eventsTable.start})`, sql `unixepoch(${dateStr})`));
+    return dbRes.length > 0;
 }
-app.delete("/kackevent", (req, res) => {
+app.delete("/kackevent", async (req, res) => {
     const dateQuery = req.query.date;
-    const dateStr = typeof dateQuery === 'string' ? dateQuery.substring(0, 10) : "";
+    const dateStr = typeof dateQuery === 'string' ? dateQuery : "";
     if (!isValidDateString(dateStr)) {
-        res.status(400).json({ error: "Invalid date format", date: dateQuery });
+        return res.status(400).json({ error: "Invalid date format", date: dateQuery });
     }
-    const dateExists = doesDateExist(dateStr);
+    const dateExists = await doesDateExist(dateStr);
     if (!dateExists) {
         res.status(404).json({ error: "This date does not exist!", date: dateQuery });
         return;
     }
-    const deleteStmt = db.prepare("DELETE FROM events WHERE unixepoch(start) == unixepoch(?)");
-    const dbRes = deleteStmt.run(dateStr);
-    if (dbRes.changes && dbRes.changes == 1) {
+    const dbRes = await db.delete(eventsTable).where(eq(sql `unixepoch(${eventsTable.start})`, sql `unixepoch(${dateStr})`));
+    if (dbRes.rowsAffected == 1) {
         res.status(200).send();
     }
     else {
@@ -286,12 +247,12 @@ app.delete("/kackevent", (req, res) => {
     }
 });
 app.post('/shutdown', (req, res) => {
-    console.log("Shutdown requested via API endpoint");
+    logger.info("Shutdown requested via API endpoint");
     res.status(200).json({ message: "Shutting down..." });
     setTimeout(() => {
         exec('sudo /bin/systemctl poweroff', (error) => {
             if (error) {
-                console.error(`Shutdown failed: ${error.message}`);
+                logger.error(`Shutdown failed: ${error.message}`);
             }
         });
     }, 1000);
@@ -301,7 +262,7 @@ app.post("/reboot", (req, res) => {
     setTimeout(() => {
         exec('sudo systemctl reboot', (error) => {
             if (error) {
-                console.error("Reboot failed:", error);
+                logger.error("Reboot failed:", error);
             }
         });
     }, 1000);
@@ -313,7 +274,7 @@ function setScreenBrightness(brightness) {
         return false;
     }
     if (!brightnessFile) {
-        console.error("No brightness file found.");
+        logger.error("No brightness file found.");
         return false;
     }
     try {
@@ -321,7 +282,7 @@ function setScreenBrightness(brightness) {
         return true;
     }
     catch (err) {
-        console.error(`Error setting screen brightness:`, err);
+        logger.error(`Error setting screen brightness:`, err);
         return false;
     }
 }
@@ -342,12 +303,17 @@ app.post("/display/brightness", (req, res) => {
         return res.sendStatus(503);
     }
 });
-app.use((err, req, res, next) => {
-    console.error("Unhandled Error:", err);
+app.use((err, req, res) => {
+    logger.error("Unhandled Error:", err);
     res.status(500);
     res.send();
 });
-app.listen(BACKEND_PORT, () => {
+const server = app.listen(BACKEND_PORT, () => {
     // noinspection HttpUrlsUsage
-    console.log(`Listening on http://[::1]:${BACKEND_PORT}`);
+    logger.info(`Listening on http://[::1]:${BACKEND_PORT}`);
+});
+process.on("SIGTERM", () => {
+    server.close(async () => {
+        process.exit(0);
+    });
 });
