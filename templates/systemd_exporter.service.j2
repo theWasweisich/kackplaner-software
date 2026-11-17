@@ -1,0 +1,11 @@
+[Unit]
+Description=Prometheus Systemd Exporter
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/systemd_exporter --systemd.collector.unit-include="kackplaner.*" --systemd.collector.enable-restart-count
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
