@@ -2,26 +2,27 @@ import logging
 import os
 import sqlite3
 import sys
-from pathlib import Path
-from typing import Optional
-
-import pydantic
-from pydantic import BaseModel
+import json
+from notifier_config import load_config
 from telegram_client import send_webhook_message, WebhookResult, escape_markdown_v2
 
-class Configuration(BaseModel):
-    shittingcycle: int = 2
-    reminder_message: str = "*Hinweis*: Heute ist Kacktag! (Das letzte Kackevent war vor {} Tag(en))\\."
-    alert_message: str = "*Achtung*: Das letzte Kackevent war bereits {} Tag(e) her\\."
+class JSONFormatter(logging.Formatter):
+    def format(self, record):
+        log_record = {
+            "level": record.levelname.lower(),
+            "message": record.getMessage(),
+        }
 
-CONFIG: Optional[Configuration] = None
+        if record.exc_info:
+            log_record["stack"] = self.formatException(record.exc_info)
 
-def alert_threshold_reached(days_since: int):
-    print("Threshold reached. Sending webhook event...")
+        return json.dumps(log_record)
+
+def alert_threshold_reached(days_since: int, message_template: str):
+    logging.info("Threshold reached. Sending webhook event...")
 
     escaped_days_since = escape_markdown_v2(str(days_since))
-
-    message_to_send = f"*Achtung*: Das letzte Kackevent war bereits {escaped_days_since} Tag{"" if days_since == 1 else "e"} her\\."
+    message_to_send = message_template.format(days=escaped_days_since)
 
     result = send_webhook_message(message_to_send)
 
@@ -46,47 +47,53 @@ LIMIT 1;
         row = cursor.fetchone()
         conn.close()
     except sqlite3.Error as e:
-        print(f"Database error: {e}")
+        logging.error(f"Database error: {e}")
         return None
 
     if not row:
-        print("No past events were found.")
+        logging.warning("No past events were found.")
         return None
     days_since = int(row[0])
     return days_since
 
-def get_config_path(config_directory: Path) -> Path:
-    return config_directory / "notifier.settings.json"
+def setup_logging():
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
 
-def load_config(config_directory: Path):
-    global CONFIG
-    config_file = get_config_path(config_directory)
-    try:
-        CONFIG = Configuration.model_validate_json(config_file.read_text())
-    except pydantic.ValidationError as e:
-        logging.error("Failed to parse config!", e)
+    if logger.hasHandlers():
+        logger.handlers.clear()
+
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(JSONFormatter())
+    logger.addHandler(handler)
 
 def main():
+    setup_logging()
     db_path = os.environ.get("DB_PATH", "./database.db")
-    config_path = os.environ.get("CONFIG_DIR", ".")
 
-    if os.path.exists(config_path) and os.path.isdir(config_path):
-        load_config(Path(config_path))
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.environ.get("ALERTS_CONFIG_PATH", os.path.join(script_dir, "alerts.json"))
+
+    config = load_config(config_path)
+    if not config:
+        logging.error("Exiting due to invalid or missing configuration")
+        return
 
     if len(sys.argv) > 1 and sys.argv[1] == "--test":
-        print("Running in test mode. Forcing webhook execution")
-        alert_threshold_reached(99)
+        logging.info("Running in test mode. Forcing webhook execution")
+        template = config.rules[0].message if config.rules else "Test: {days} Tage her\\."
+        alert_threshold_reached(99, template)
         return
 
     days_since = get_days_since_last_event(db_path=db_path)
-
     if days_since is None:
         return
 
-    print(f"Last event was {days_since} days ago")
+    logging.info(f"Last event was {days_since} days ago")
 
-    if days_since > 3:
-        alert_threshold_reached(days_since=days_since)
+    for rule in config.rules:
+        if rule.matches(days_since):
+            alert_threshold_reached(days_since=days_since, message_template=rule.message)
 
 if __name__ == "__main__":
     main()

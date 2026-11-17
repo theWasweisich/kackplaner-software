@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "target": "es2025",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+  },
+  "include": ["server.ts"]
+}

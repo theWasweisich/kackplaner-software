@@ -1,6 +1,7 @@
 import express, {} from 'express';
-import { and, asc, eq, SQL, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, lte, SQL, sql } from 'drizzle-orm';
 import { events as eventsTable } from './db/schema.js';
+import { relations } from './db/relations.js';
 import cors from 'cors';
 import { exec } from "child_process";
 import path from 'path';
@@ -24,7 +25,7 @@ function startMonitoring(req, res, next) {
 }
 const logger = winston.createLogger({
     level: "debug",
-    format: winston.format.combine(winston.format.timestamp(), winston.format.json()),
+    format: winston.format.combine(winston.format.errors({ stack: true }), winston.format.timestamp(), winston.format.json()),
     transports: [
         new winston.transports.Console(),
         new winston.transports.File({ filename: "app.log" })
@@ -113,6 +114,8 @@ function dbEventsToNetwork(events) {
     return networkEvents;
 }
 async function insertEvents(events) {
+    if (events.length === 0)
+        return false;
     const dbEvents = networkToDbEvents(events);
     const res = await db.insert(eventsTable).values(dbEvents).returning();
     return res.length == events.length;
@@ -135,28 +138,35 @@ function validateEvents(events) {
     return "success";
 }
 app.post("/kackevent", async (req, res) => {
-    const putBody = req.body;
-    if (!("events" in putBody)) {
+    const postBody = req.body;
+    if (!("events" in postBody)) {
         return res.status(401).json({
             error: "Invalid payload. Expected events array"
         });
     }
-    if (!Array.isArray(putBody.events)) {
+    if (!Array.isArray(postBody.events)) {
         return res.status(401).json({
             error: "Invalid payload. Malformed events property"
         });
     }
-    const validationResult = validateEvents(putBody.events);
+    const postedEvents = postBody.events;
+    const validationResult = validateEvents(postedEvents);
     if (validationResult !== "success") {
         if (validationResult === "date")
-            return res.status(401).json({ error: "Invalid Date format", events: putBody.events });
+            return res.status(401).json({ error: "Invalid Date format", events: postedEvents });
         if (validationResult === "title")
-            return res.status(401).json({ error: "Invalid title", events: putBody.events });
+            return res.status(401).json({ error: "Invalid title", events: postedEvents });
         if (validationResult === "id")
-            return res.status(401).json({ error: "Invalid Id", events: putBody.events });
+            return res.status(401).json({ error: "Invalid Id", events: postedEvents });
         return res.sendStatus(500);
     }
-    const eventsToBeInserted = ([...putBody.events]);
+    const eventsToBeInserted = ([...postedEvents]);
+    if (eventsToBeInserted.length !== postedEvents.length) {
+        logger.warn(`Unpacked fewer events than were posted.`, {
+            posted: postedEvents.length,
+            unpacked: eventsToBeInserted.length
+        });
+    }
     const success = await insertEvents(eventsToBeInserted);
     if (success) {
         return res.status(201).json({
@@ -164,12 +174,15 @@ app.post("/kackevent", async (req, res) => {
         });
     }
     else {
-        logger.error("There was an error while inserting events. Rollback occurred");
+        logger.error("There was an error while inserting events:", eventsToBeInserted);
     }
     return res.status(400).json({
-        "events": putBody.events
+        "events": postBody.events
     });
 });
+function getOrderByDateSQL() {
+    return sql `unixepoch(${eventsTable.start})`;
+}
 async function getEvents(fromStr, toStr) {
     const filters = [];
     if (fromStr)
@@ -184,7 +197,27 @@ async function getEvents(fromStr, toStr) {
         .select()
         .from(eventsTable)
         .where(and(...filters))
-        .orderBy(asc(sql `unixepoch(${eventsTable.start})`)));
+        .orderBy(asc(getOrderByDateSQL())));
+}
+async function getLatestEventDate() {
+    const dbRes = await db
+        .select({
+        date: eventsTable.start
+    })
+        .from(eventsTable)
+        .orderBy(desc(getOrderByDateSQL()))
+        .limit(1);
+    if (dbRes.length !== 1) {
+        return;
+    }
+    const date = dbRes[0].date ?? undefined;
+    if (date) {
+        logger.info(`Last event was on ${date}`);
+    }
+    else {
+        logger.warn("Date of last event could not be found");
+    }
+    return dbRes[0].date ?? undefined;
 }
 function cleanDateStringInput(input) {
     if (typeof input !== "string")
@@ -211,6 +244,24 @@ app.get("/kackevent", async (req, res) => {
         "end": dbRes.length > 0 ? dbRes[dbRes.length - 1].start : undefined,
         "events": dbRes
     });
+});
+async function getLastEvent() {
+    const dbRes = await db
+        .select()
+        .from(eventsTable)
+        .where(lte(eventsTable.start, sql `datetime('now', 'julianday')`))
+        .orderBy(desc(getOrderByDateSQL()))
+        .limit(1);
+    if (dbRes.length === 0) {
+        return;
+    }
+    return dbRes[0];
+}
+app.get("/kackevent/latest/:field", (req, res) => {
+    const requestedField = req.params.field;
+    if (typeof requestedField !== "string") {
+        return res.sendStatus(501);
+    }
 });
 app.get("/kackevent/dump", async (req, res) => {
     const dbRes = await getEvents();
@@ -311,6 +362,13 @@ app.use((err, req, res) => {
 const server = app.listen(BACKEND_PORT, () => {
     // noinspection HttpUrlsUsage
     logger.info(`Listening on http://[::1]:${BACKEND_PORT}`);
+});
+process.on("uncaughtException", (err) => {
+    logger.crit("Uncaught Exception:", err);
+    process.exit(1);
+});
+process.on("unhandledRejection", (reason) => {
+    logger.crit("Unhandled rejection:", reason);
 });
 process.on("SIGTERM", () => {
     server.close(async () => {

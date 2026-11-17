@@ -1,0 +1,7 @@
+{
+  "rules": [
+    { "days": 3, "message": "Heute ist *Kacktag*!" },
+    { "days": 4, "message": "*Achtung*: Das letzte Kackevent ist bereits {days} Tage her\\."},
+    { "days": 7, "message": "*CRITICAL*: Darm kurz vor Explosion!" }
+  ]
+}

@@ -138,6 +138,7 @@ def build_status_message() -> str:
 @bot.message_handler(commands=[CMD_LAST_EVENT.command])
 async def send_last_schiss(message: telebot.types.Message):
     message_to_send = await asyncio.to_thread(get_last_schiss_message)
+    await bot.send_chat_action(message.chat.id, telebot)
     await bot.send_message(message.chat.id, message_to_send, parse_mode="MarkdownV2")
 
 @bot.message_handler(commands=[CMD_STATUS.command])

@@ -6,6 +6,14 @@ export const events = sqliteTable("events", {
 	title: text(),
 	start: text(),
 	microlax: integer(),
+	userId: integer().references(() => users.id, { onDelete: "no action", onUpdate: "no action" })
+});
+
+export const users = sqliteTable("users", {
+	id: integer().primaryKey(),
+	username: text().unique(),
+	display_name: text(),
+	password: text()
 });
 
 export const apiClients = sqliteTable("api_clients", {

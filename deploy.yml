@@ -236,40 +236,49 @@
 
     - name: Frontend Deployment Group
       block:
-        - name: Local Build - Compile Frontend
+        - name: Local Build - Compile Frontend and BFF
           delegate_to: localhost
           become: false
           ansible.builtin.shell: "source ~/.nvm/nvm.sh && npm install && npm run build"
           args:
             executable: /bin/bash
             chdir: "{{ playbook_dir }}/frontend"
-          environment:
-            VITE_BACKEND_PORT: "{{ backend_port }}"
           # noqa: no-changed-when
 
-        - name: Ensure final dist directory exists on Pi
-          ansible.builtin.file:
-            path: "{{ base_dest }}/frontend/dist"
-            state: directory
-            owner: "{{ app_user }}"
-            group: "{{ app_user }}"
-            mode: "0755"
-
-        - name: Push compiled dist to Pi
+        - name: Push frontend artifacts to Pi
           ansible.posix.synchronize:
-            src: "{{ playbook_dir }}/frontend/dist/"
-            dest: "{{ base_dest }}/frontend/dist/"
+            src: "{{ playbook_dir }}/frontend/"
+            dest: "{{ base_dest }}/frontend/"
             delete: true
             owner: false
             group: false
             checksum: true
+            rsync_opts:
+              - "--exclude=node_modules"
+              - "--exclude=src"
+              - "--exclude=public"
+              - "--exclude=*.ts"
+              - "--exclude=tsconfig*.json"
+              - "--exclude=README.md"
+              - "--exclude=.git*"
+              - "--exclude=.idea"
           register: frontend_sync
           notify: "Restart Frontend"
 
-        - name: Fix ownership of final dist
+        - name: Pi Build - Install production Node modules for BFF
+          when: frontend_sync.changed
+          ansible.builtin.command: npm install --omit=dev
+          args:
+            chdir: "{{ base_dest }}/frontend"
+          environment:
+            PATH: "{{ nvm_bin_dir }}:/usr/bin:/bin"
+          become_user: "{{ app_user }}"
+          # noqa: no-changed-when no-handler
+
+        - name: Fix ownership
           when: frontend_sync.changed
           ansible.builtin.file:
-            path: "{{ base_dest }}/frontend/dist"
+            path: "{{ base_dest }}/frontend"
             owner: "{{ app_user }}"
             group: "{{ app_user }}"
             recurse: true
@@ -293,6 +302,38 @@
             mode: "0644"
           register: prometheus_sync
           notify: "Restart Prometheus"
+        
+        - name: Install Prometheus Node Exporter
+          ansible.builtin.apt:
+            name: prometheus-node-exporter
+            state: present
+
+        - name: Enable systemd collector for kackplaner units
+          ansible.builtin.copy:
+            dest: /etc/default/prometheus-node-exporter
+            content: 'ARGS="--collector.systemd --collector.systemd.unit-include=\"kackplaner.*\""'
+          notify: "Restart Node Exporter"
+        
+        - name: Download systemd_exporter binary
+          ansible.builtin.unarchive:
+            src: "https://github.com/prometheus-community/systemd_exporter/releases/download/v0.7.0/systemd_exporter-0.7.0.linux-arm64.tar.gz"
+            remote_src: true
+            dest: /usr/local/bin/
+            extra_opts:
+              - --strip-components=1
+              - systemd_exporter-0.7.0.linux-arm64/systemd_exporter
+            owner: root
+            mode: '0755'
+          notify: "Restart Systemd Exporter"
+
+        - name: Create systemd_exporter service
+          ansible.builtin.template:
+            src: "{{ playbook_dir }}/templates/systemd_exporter.service.j2"
+            dest: /etc/systemd/system/systemd_exporter.service
+            owner: root
+            group: root
+            mode: '0644'
+          notify: "Restart Systemd Exporter"
 
     - name: Grafana Deployment Group
       block:
@@ -368,7 +409,9 @@
             group: promtail
             mode: "0644"
           register: promtail_sync
-          notify: "Restart Promtail"
+          notify: 
+            - "Restart Promtail"
+            - "Reload systemd daemon"
 
     - name: Systemd Services and Startup Group
       block:
@@ -381,71 +424,15 @@
             mode: "0644"
           loop: "{{ systemd_units }}"
           register: service_files_sync
+          notify: "Restart updated systemd units"
 
-        - name: Link updated units into systemd
-          ansible.builtin.command: systemctl link {{ base_dest }}/services/{{ item.item }}
-          loop: "{{ service_files_sync.results }}"
-          loop_control:
-            label: "{{ item.item }}"
-          when: item.changed
-          register: link_result
-          changed_when: "'Created symlink' in link_result.stdout"
-          # noqa: command-instead-of-module no-handler
-
-        - name: Reload systemd daemon if units changed
-          ansible.builtin.systemd:
-            daemon_reload: true
-          when: service_files_sync.changed
-          # noqa: no-handler
-
-        - name: Restart External daemons if source code changed
-          ansible.builtin.command: "systemctl restart {{ restart_triggers.external | join(' ') }}"
-          when: external_sync.changed
-          # noqa: no-handler
-
-        - name: Restart Backend daemons if source code changed
-          ansible.builtin.command: "systemctl restart {{ restart_triggers.backend | join(' ') }}"
-          when: backend_sync.changed
-          # noqa: no-handler
-
-        - name: Restart Frontend daemons if source code changed
-          ansible.builtin.command: "systemctl restart {{ restart_triggers.frontend | join(' ') }}"
-          when: frontend_sync.changed
-          # noqa: no-handler
-
-        - name: Restart Notifier daemons if source code changed
-          ansible.builtin.command: "systemctl restart {{ restart_triggers.notifier | join(' ') }}"
-          when: notifier_sync.changed
-          # noqa: no-handler
-
-        - name: Restart Kiosk Supervisor
-          ansible.builtin.command: "systemctl restart {{ restart_triggers.kiosk_scripts | join(' ') }}"
-          when: kiosk_scripts_sync.changed
-          # noqa: no-handler
-
-        - name: Restart Prometheus
-          ansible.builtin.command: "systemctl restart {{ restart_triggers.prometheus | join(' ') }}"
-          when: prometheus_sync.changed
-          # noqa: no-handler
-
-        - name: Restart Grafana
-          ansible.builtin.command: "systemctl restart {{ restart_triggers.grafana | join(' ') }}"
-          when: grafana_sync.changed or grafana_provisioning_sync.changed
-
-        - name: Restart Promtail
-          ansible.builtin.command: "systemctl restart {{ restart_triggers.promtail | join(' ') }}"
-          when: promtail_sync.changed
-          # noqa: command-instead-of-module no-handler
-
-        - name: Restart any service whose unit file changed
-          ansible.builtin.systemd:
-            name: "{{ item.item }}"
-            state: restarted
-          loop: "{{ service_files_sync.results }}"
-          loop_control:
-            label: "{{ item.item }}"
-          when: item.changed and item.item in active_services
-          # noqa: no-handler
+        - name: Symlink units to systemd directory
+          ansible.builtin.file:
+            src: "{{ base_dest }}/services/{{ item }}"
+            dest: "/etc/systemd/system/{{ item }}"
+            state: link
+          loop: "{{ systemd_units }}"
+          notify: "Reload systemd daemon"
 
         - name: Ensure all services are enabled
           ansible.builtin.systemd:
@@ -453,11 +440,84 @@
             state: started
             enabled: true
           loop: "{{ active_services }}"
+          ignore_errors: true
 
   handlers:
+    - name: "Reload systemd daemon"
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: "Restart updated systemd units"
+      ansible.builtin.systemd:
+        name: "{{ item.item }}"
+        state: restarted
+      loop: "{{ service_files_sync.results }}"
+      when: item.changed and item.item in active_services
+      ignore_errors: true
+
     - name: "Restart External"
       ansible.builtin.systemd:
         name: "{{ item }}"
         state: restarted
       loop: "{{ restart_triggers.external }}"
       ignore_errors: true
+
+    - name: "Restart Backend"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: restarted
+      loop: "{{ restart_triggers.backend }}"
+      ignore_errors: true
+
+    - name: "Restart Frontend"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: restarted
+      loop: "{{ restart_triggers.frontend }}"
+      ignore_errors: true
+
+    - name: "Restart Notifier"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: restarted
+      loop: "{{ restart_triggers.notifier }}"
+      ignore_errors: true
+
+    - name: "Restart Kiosk Scripts"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: restarted
+      loop: "{{ restart_triggers.kiosk_scripts }}"
+      ignore_errors: true
+
+    - name: "Restart Prometheus"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: restarted
+      loop: "{{ restart_triggers.prometheus }}"
+      ignore_errors: true
+
+    - name: "Restart Grafana"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: restarted
+      loop: "{{ restart_triggers.grafana }}"
+      ignore_errors: true
+
+    - name: "Restart Promtail"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: restarted
+      loop: "{{ restart_triggers.promtail }}"
+      ignore_errors: true
+
+    - name: "Restart Node Exporter"
+      ansible.builtin.systemd:
+        name: prometheus-node-exporter
+        state: restarted
+      ignore_errors: true
+    
+    - name: "Restart Systemd Exporter"
+      ansible.builtin.systemd:
+        name: systemd_exporter.service
+        state: restarted
