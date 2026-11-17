@@ -26,3 +26,4 @@ dist-ssr
 *.db
 *.db*
 .env
+*.js

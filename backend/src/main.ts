@@ -1,15 +1,20 @@
+import { RedisStore } from "connect-redis";
+import {createClient} from "redis";
+
 import express, {type Request, type Response, type NextFunction} from 'express';
 import {and, asc, desc, eq, gte, lte, SQL, sql} from 'drizzle-orm';
 import { events as eventsTable } from './db/schema.ts';
-import { relations } from './db/relations.ts';
+import { usersRouter } from './routers/usersRouter.ts';
+import session from "express-session";
 import cors from 'cors';
 import {exec} from "child_process";
 import path from 'path';
 import fs from 'fs';
-import winston from 'winston';
+import { logger } from "./logging.ts";
 import client from 'prom-client';
 import db from './db/database.ts';
 import 'dotenv/config';
+import type {Logger} from "winston";
 
 const httpRequestDuration = new client.Histogram({
     name: "http_request_duration_seconds",
@@ -25,19 +30,6 @@ function startMonitoring(req: Request, res: Response, next: NextFunction) {
     });
     next();
 }
-
-const logger = winston.createLogger({
-    level: "debug",
-    format: winston.format.combine(
-        winston.format.errors({ stack: true }),
-        winston.format.timestamp(),
-        winston.format.json()
-    ),
-    transports: [
-        new winston.transports.Console(),
-        new winston.transports.File({ filename: "app.log" })
-    ],
-});
 
 const BACKEND_PORT = process.env.BACKEND_PORT || "8090";
 const FRONTEND_PORT = process.env.FRONTEND_PORT || "5173";
@@ -55,31 +47,53 @@ try {
     logger.error("Could not find brightness file!");
 }
 
-const app = express();
-app.use(startMonitoring);
+const redisClient = createClient();
+redisClient.connect().catch(logger.error);
 
+const redisStore = new RedisStore({
+    client: redisClient,
+    prefix: "kackplaner:"
+})
+
+const app = express();
+app.use(session({
+    secret: "keyboard cat",
+    resave: false,
+    saveUninitialized: false,
+    store: redisStore,
+    cookie: {
+        maxAge: 1000 * 60 * 60 * 24, // 1 day,
+        httpOnly: true,
+    }
+}));
+app.use(startMonitoring);
+app.use(express.json());
 app.use((req: Request, res: Response, next: NextFunction) => {
     req.logger = logger.child({
         requestId: req.headers["x-request-id"] || crypto.randomUUID(),
+        path: req.path
     });
     next();
-})
+});
 
 const allowedOrigins = [
     `http://localhost:${FRONTEND_PORT}`,
     `http://127.0.0.1:${FRONTEND_PORT}`,
 ]
 
+function dynamicCORSOriginSelection(origin: string | undefined, callback: (err: Error | null, origin?: boolean) => void) {
+    if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+    } else {
+        callback(new Error(`"${origin}" is not allowed by CORS`));
+    }
+}
+
 app.use(cors({
-    origin: (origin, callback) => {
-        if (!origin || allowedOrigins.includes(origin)) {
-            callback(null, true);
-        } else {
-            callback(new Error(`"${origin}" Not allowed by CORS`))
-        }
-    },
+    origin: dynamicCORSOriginSelection,
     methods: ["GET", "POST", "PUT", "DELETE"],
-    allowedHeaders: ['Content-Type', 'x-client-id', 'x-timestamp', 'x-signature']
+    allowedHeaders: ['Content-Type', 'x-client-id', 'x-timestamp', 'x-signature'],
+    credentials: true,
 }));
 
 interface NetworkEvent {
@@ -97,7 +111,6 @@ app.get("/metrics", async (req, res) => {
 interface KackeventPostBody {
     events: NetworkEvent[]
 }
-
 function isValidDateString(dateString: string): boolean {
     if (typeof dateString !== "string") return false;
 
@@ -108,9 +121,8 @@ function isValidDateString(dateString: string): boolean {
     if (isNaN(date.getTime())) return false;
 
     return date.toISOString() === dateString;
-}
 
-app.use(express.json());
+}
 
 function networkToDbEvents(events: NetworkEvent[]): typeof eventsTable.$inferInsert[] {
     const dbEvents: typeof eventsTable.$inferInsert[] = [];
@@ -177,6 +189,7 @@ function validateEvents(events: NetworkEvent[]): EventsValidationResult {
 }
 
 app.post("/kackevent", async (req: Request, res: Response) => {
+    const logger = req.logger!;
     const postBody = req.body as KackeventPostBody;
 
     if (!("events" in postBody)) {
@@ -232,7 +245,7 @@ function getOrderByDateSQL() {
     return sql`unixepoch(${eventsTable.start})`;
 }
 
-async function getEvents(fromStr?: string, toStr?: string): Promise<NetworkEvent[] | undefined> {
+async function getEvents(logger: Logger, fromStr?: string, toStr?: string): Promise<NetworkEvent[] | undefined> {
     const filters: SQL[] = [];
     if (fromStr) filters.push(sql`unixepoch(${eventsTable.start}) > unixepoch(${fromStr})`);
     if (toStr) filters.push(sql`unixepoch(${eventsTable.start}) < unixepoch(${toStr})`);
@@ -282,6 +295,7 @@ function cleanDateStringInput(input: string): string {
 }
 
 app.get("/kackevent", async (req: Request, res: Response) => {
+    const logger = req.logger!;
     const startStr = req.query.start;
     const endStr = req.query.end;
 
@@ -294,7 +308,7 @@ app.get("/kackevent", async (req: Request, res: Response) => {
     if ((cleanStart && !isValidDateString(cleanStart)) || (cleanEnd && !isValidDateString(cleanEnd)))
         return res.status(400).json({ error: "Invalid date format", start: startStr, end: endStr});
 
-    const dbRes = await getEvents(cleanStart, cleanEnd) ?? [];
+    const dbRes = await getEvents(logger, cleanStart, cleanEnd) ?? [];
 
     if (dbRes.length === 0) {
         logger.warn(`No events found between ${startStr} and ${endStr}`);
@@ -307,7 +321,7 @@ app.get("/kackevent", async (req: Request, res: Response) => {
     });
 });
 
-async function getLastEvent() {
+async function getLastEvent(logger: Logger) {
     logger.info("Fetching latest event");
     const query = db
         .select()
@@ -332,7 +346,8 @@ async function getLastEvent() {
 }
 
 app.get("/kackevent/latest", async (req: Request, res: Response) => {
-    const lastEvent = await getLastEvent();
+    const logger = req.logger!;
+    const lastEvent = await getLastEvent(logger);
 
     if (!lastEvent) {
         return res.sendStatus(204);
@@ -352,7 +367,8 @@ app.get("/kackevent/latest/:field", (req: Request, res: Response) => {
 })
 
 app.get("/kackevent/dump", async (req: Request, res: Response) => {
-    const dbRes = await getEvents();
+    const logger = req.logger!;
+    const dbRes = await getEvents(logger);
     if (dbRes === undefined) return res.sendStatus(204);
     return res.json({
         'events': dbRes
@@ -398,6 +414,7 @@ app.delete("/kackevent", async (req: Request, res: Response) => {
 })
 
 app.post('/shutdown', (req: Request, res: Response) => {
+    const logger = req.logger!;
     logger.info("Shutdown requested via API endpoint");
     res.status(200).json({ message: "Shutting down..." });
 
@@ -411,6 +428,7 @@ app.post('/shutdown', (req: Request, res: Response) => {
 })
 
 app.post("/reboot", (req: Request, res: Response) => {
+    const logger = req.logger!;
 
     res.status(200).json({ message: "Rebooting..." });
     setTimeout(() => {
@@ -422,7 +440,7 @@ app.post("/reboot", (req: Request, res: Response) => {
     }, 1000)
 })
 
-function setScreenBrightness(brightness: number): boolean {
+function setScreenBrightness(logger: Logger, brightness: number): boolean {
     if (typeof brightness !== "number") return false;
     if (brightness > 255 || brightness < 0) { return false; }
     if (!brightnessFile) {
@@ -440,6 +458,7 @@ function setScreenBrightness(brightness: number): boolean {
 }
 
 app.post("/display/brightness", (req, res) => {
+    const logger = req.logger!;
     const queryBrightness = req.query.brightness;
     if (typeof queryBrightness !== "string") {
         return res.sendStatus(400);
@@ -450,7 +469,7 @@ app.post("/display/brightness", (req, res) => {
         return res.sendStatus(400);
     }
 
-    const success = setScreenBrightness(numberBrightness);
+    const success = setScreenBrightness(logger, numberBrightness);
     if (success) {
         return res.sendStatus(200);
     } else {
@@ -458,25 +477,31 @@ app.post("/display/brightness", (req, res) => {
     }
 });
 
-app.use((err: Error, req: Request, res: Response) => {
-    logger.error("Unhandled Error:", err);
-    res.status(500);
-    res.send();
+app.use("/users", usersRouter);
+
+app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
+    if (req.logger) {
+        req.logger!.error("Unhandled Error:", err);
+    }
+    res.status(500).send("Something went wrong!");
 })
 
 const server = app.listen(BACKEND_PORT, () => {
-    // noinspection HttpUrlsUsage
     logger.info(`Listening on http://[::1]:${BACKEND_PORT}`);
 });
 
 process.on("uncaughtException", (err) => {
     logger.crit("Uncaught Exception:", err);
-    process.exit(1);
+    server.close(async () => {
+        process.exit(1);
+    });
 });
 
 process.on("unhandledRejection", (reason) => {
     logger.crit("Unhandled rejection:", reason);
-    process.exit(1);
+    server.close(async () => {
+        process.exit(1);
+    });
 })
 
 process.on("SIGTERM", () => {
