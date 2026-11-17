@@ -1,5 +1,5 @@
 import express, {} from 'express';
-import { and, asc, desc, eq, lte, SQL, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, lte, SQL, sql } from 'drizzle-orm';
 import { events as eventsTable } from './db/schema.js';
 import { relations } from './db/relations.js';
 import cors from 'cors';
@@ -246,17 +246,31 @@ app.get("/kackevent", async (req, res) => {
     });
 });
 async function getLastEvent() {
-    const dbRes = await db
+    logger.info("Fetching latest event");
+    const query = db
         .select()
         .from(eventsTable)
-        .where(lte(eventsTable.start, sql `datetime('now', 'julianday')`))
         .orderBy(desc(getOrderByDateSQL()))
         .limit(1);
+    query.where(gte(sql `timediff('now', ${eventsTable.start})`, 0));
+    const dbRes = await query;
     if (dbRes.length === 0) {
+        logger.info("No latest event found");
         return;
     }
-    return dbRes[0];
+    const latestEvent = dbRes[0];
+    logger.info(`Found latest event (on ${latestEvent.start})`);
+    return latestEvent;
 }
+app.get("/kackevent/latest", async (req, res) => {
+    const lastEvent = await getLastEvent();
+    if (!lastEvent) {
+        return res.sendStatus(204);
+    }
+    return await res.json({
+        latest: lastEvent
+    });
+});
 app.get("/kackevent/latest/:field", (req, res) => {
     const requestedField = req.params.field;
     if (typeof requestedField !== "string") {
@@ -369,6 +383,7 @@ process.on("uncaughtException", (err) => {
 });
 process.on("unhandledRejection", (reason) => {
     logger.crit("Unhandled rejection:", reason);
+    process.exit(1);
 });
 process.on("SIGTERM", () => {
     server.close(async () => {
