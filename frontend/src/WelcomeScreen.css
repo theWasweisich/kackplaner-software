@@ -1,0 +1,13 @@
+.welcome-root {
+    padding: 2em;
+}
+
+.welcome-screen {
+    max-width: 60%;
+    margin-inline: auto;
+
+    h1 {
+        font-size: xxx-large;
+        text-align: center;
+    }
+}

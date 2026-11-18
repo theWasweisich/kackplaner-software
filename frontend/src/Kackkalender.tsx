@@ -1,5 +1,6 @@
-import {useRef, useState} from "react";
-import {type CalendarEvent, createEvents, deleteEvent, fetchEvents, type NetworkEvent} from "./api/api.ts";
+import {useEffect, useRef, useState} from "react";
+import {type CalendarEvent, type NetworkEvent} from "./api/api.ts";
+import * as api from './api/api.ts'
 import {useConfirm} from "./MicrolaxConfirmProvider.tsx";
 import FullCalendar, {type DateClickInfo, type DatesSetInfo} from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/react/daygrid";
@@ -8,6 +9,7 @@ import interactionPlugin from "@fullcalendar/react/interaction";
 import formaThemePlugin from "@fullcalendar/react/themes/forma";
 import './Kackkalendar.css';
 import ControlButtons from "./ControlButtons.tsx";
+import TopNavBar from "./TopNavBar.tsx";
 
 const BATCH_DELAY_MS = 1000;
 const EVENT_COLOR = "#a52a2a";
@@ -37,13 +39,20 @@ function formatCalendarEvent(calendarEvent: CalendarEvent): NetworkEvent {
 
 function Kackkalender() {
     const [events, setEvents] = useState<CalendarEvent[]>([])
+    const [activeUsername, setActiveUsername] = useState("...")
     const confirm = useConfirm();
 
     const pendingCreates = useRef<CalendarEvent[]>([])
     const createTimeout = useRef<number | null>(null)
 
+    useEffect(() => {
+        api.getMe().then(username => {
+            if (username) setActiveUsername(username);
+        })
+    }, []);
+
     const handleDatesSet = async (dateInfo: DatesSetInfo) => {
-        const fetchedEvents = await fetchEvents(dateInfo.start, dateInfo.end)
+        const fetchedEvents = await api.fetchEvents(dateInfo.start, dateInfo.end)
         if (fetchedEvents && fetchedEvents.length > 0) {
             const calendarEvents: CalendarEvent[] = fetchedEvents.map(formatNetworkEvent)
             setEvents(calendarEvents)
@@ -66,7 +75,7 @@ function Kackkalender() {
 
         const newEvents = [...events];
         const deletedEvent = newEvents.splice(index, 1)[0];
-        const success = await deleteEvent(deletedEvent);
+        const success = await api.deleteEvent(deletedEvent);
         if (success) {
             setEvents(newEvents);
         }
@@ -124,7 +133,7 @@ function Kackkalender() {
 
         const networkEvents: NetworkEvent[] = eventsToSend.map(formatCalendarEvent);
 
-        await createEvents(networkEvents);
+        await api.createEvents(networkEvents);
     }
 
     const flushPendingEvents = async () => {
@@ -135,8 +144,14 @@ function Kackkalender() {
         await createPendingEvents();
     }
 
+    const switchProfileHandler = async () => {
+        await flushPendingEvents();
+        await api.endSession();
+    }
+
     return (
         <div>
+            <TopNavBar userName={activeUsername} onSwitchProfile={switchProfileHandler} />
             <FullCalendar
                 plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin, formaThemePlugin]}
                 initialView="dayGridMonth"

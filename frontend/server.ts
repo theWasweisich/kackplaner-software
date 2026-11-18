@@ -30,6 +30,28 @@ const PORT = process.env.FRONTEND_PORT || 2222;
 const BACKEND_PORT = process.env.BACKEND_PORT || 8090;
 const backendTarget = `http://localhost:${BACKEND_PORT}`;
 
+const STATUS_CODES = {
+    SUCCESS: 200,
+    BAD_REQUEST: 400,
+    UNAUTHORIZED: 401,
+    SERVER_ERROR: 500,
+}
+
+async function dropSessionCookie(req: Request, res: Response) {
+    try {
+        const backendRes = await fetch(backendTarget + "/users/logout", {
+            method: "POST",
+            headers: { 'cookie': req.headers.cookie || '' }
+        });
+        translateHeaders(backendRes.headers, res);
+        const resText = await backendRes.text();
+        res.status(backendRes.status).send(resText);
+    } catch (e) {
+        logger.error(`Logout proxy error: ${e}`);
+        res.sendStatus(STATUS_CODES.SERVER_ERROR);
+    }
+}
+
 function translateHeaders(headers: Headers, response: Response) {
     const doNotForwardHeaderKeys = [
         'content-length',
@@ -46,7 +68,6 @@ function translateHeaders(headers: Headers, response: Response) {
 }
 
 app.use((req, res, next) => {
-
     logger.info(`Request: ${req.method} ${req.url}`);
     next();
 });
@@ -59,7 +80,7 @@ app.post("/api/login", express.json(), async (req, res) => {
     const { username, password } = req.body;
 
     if (typeof username !== "string") {
-        return res.status(400).json({
+        return res.status(STATUS_CODES.BAD_REQUEST).json({
             error: "Username not provided (or invalid)"
         });
     }
@@ -67,7 +88,7 @@ app.post("/api/login", express.json(), async (req, res) => {
     const passwordToUse = password || usersVault.get(username);
 
     if (!passwordToUse) {
-        return res.status(401).json({
+        return res.status(STATUS_CODES.BAD_REQUEST).json({
             error: "Password required"
         });
     }
@@ -87,7 +108,7 @@ app.post("/api/login", express.json(), async (req, res) => {
 
         if (backendRes.ok) {
             if (password) usersVault.set(username, password);
-        } else if (backendRes.status === 401 && !password) {
+        } else if (backendRes.status === STATUS_CODES.UNAUTHORIZED && !password) {
             usersVault.delete(username);
         }
 
@@ -97,15 +118,19 @@ app.post("/api/login", express.json(), async (req, res) => {
         res.status(backendRes.status).send(responseBody);
     } catch (e) {
         logger.error(`Login proxy error: ${e}`);
-        res.status(500).send();
+        res.status(STATUS_CODES.SERVER_ERROR).send();
     }
+});
+
+app.post("/api/end-session", express.json(), async (req: Request, res: Response) => {
+    dropSessionCookie(req, res);
 });
 
 app.post("/api/logout", express.json(), async (req, res)=>  {
     const { username } = req.body;
 
     if (typeof username !== "string") {
-        return res.status(400).json({
+        return res.status(STATUS_CODES.BAD_REQUEST).json({
             error: "Username invalid"
         });
     }
@@ -114,21 +139,7 @@ app.post("/api/logout", express.json(), async (req, res)=>  {
         usersVault.delete(username);
     }
 
-    try {
-        const backendRes = await fetch(backendTarget + "/users/logout", {
-            method: "POST",
-            headers: { 'cookie': req.headers.cookie || '' },
-            signal: req.signal
-        });
-
-        translateHeaders(backendRes.headers, res);
-
-        const resText = await backendRes.text();
-        res.status(backendRes.status).send(resText);
-    } catch (e) {
-        logger.error(`Logout proxy error: ${e}`);
-        res.status(500).send();
-    }
+    dropSessionCookie(req, res);
 })
 
 app.use("/api", createProxyMiddleware({

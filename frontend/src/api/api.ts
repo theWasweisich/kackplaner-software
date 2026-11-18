@@ -15,26 +15,46 @@ export interface CalendarEvent {
   color?: string;
 }
 
+export const sessionResetEventType = "session-reset";
 export const unauthorizedEventType = "unauthorized-request";
 
-export interface UnauthorizedEventData {
-  url?: string;
-  text?: string;
+export class UnauthorizedEvent extends Event {
+  #url?: string;
+  #text?: string;
+
+  constructor(url?: string, text?: string) {
+    super(unauthorizedEventType);
+    this.#url = url;
+    this.#text = text;
+  }
+
+  get url() { return this.#url }
+  get descriptionText() { return this.#text }
 }
+
+class SessionResetEvent extends Event {
+  #reason: SessionResetReason
+
+  constructor(reason: SessionResetReason) {
+    super(sessionResetEventType);
+    this.#reason = reason;
+  }
+
+  get reason() { return this.#reason }
+}
+export type SessionResetReason = "unauthorized" | "logout";
 
 const baseUrl: string = `/api`;
 
 async function handle401Error(res: Response) {
   const text = await res.text();
 
-  const eventData: CustomEventInit<UnauthorizedEventData> = {
-    detail: {
-      text: text,
-      url: res.url
-    }
-  };
+  window.dispatchEvent(new UnauthorizedEvent(
+      res.url,
+      text
+  ));
 
-  window.dispatchEvent(new CustomEvent(unauthorizedEventType, eventData));
+  window.dispatchEvent(new SessionResetEvent("unauthorized"));
 }
 
 async function handleRequestError(res: Response) {
@@ -47,7 +67,21 @@ async function handleRequestError(res: Response) {
   return false;
 }
 
-export async function logut(username: string) {
+export async function endSession(): Promise<boolean> {
+  try {
+    const res = await fetch(baseUrl + "/end-session", { method: "POST" });
+
+    if (res.ok) {
+      window.dispatchEvent(new SessionResetEvent("logout"));
+      return true;
+    }
+  } catch (e) {
+    console.error(`Failed to end session`, e);
+  }
+  return false;
+}
+
+export async function logout(username: string) {
   try {
     const res = await fetch(baseUrl + "/logout", {
       method: "POST",
@@ -56,7 +90,7 @@ export async function logut(username: string) {
     });
 
     if (res.ok) {
-      await handle401Error(res);
+      window.dispatchEvent(new SessionResetEvent("logout"));
     }
   } catch (e) {
     console.error("Failed to log out:", e);
@@ -98,7 +132,7 @@ export async function getMe(): Promise<string | undefined> {
       if (res.status === 401) await handleRequestError(res);
       return;
     }
-    return await res.text();
+    return (await res.json()).username;
   } catch (e) {
     console.error(`Failed to get me: ${e}`)
   }

@@ -1,5 +1,6 @@
 import {useState, useEffect, type SetStateAction, type Dispatch, type ReactNode} from "react";
 import { useNavigate } from "react-router-dom";
+import './WelcomeScreen.css';
 
 interface PasswordInputComponentProps {
     selectedUsername: string;
@@ -52,7 +53,7 @@ function UserSelectionComponent({ onLogin, usernames }: UserSelectionComponentPr
                 ))}
             </div>
         ) : (
-            <p style={{ fontStyle: 'italic' }}>There are currently no active users</p>
+            <p style={{ fontStyle: 'italic' }}>There are currently no active profiles. Please add one</p>
         )}
     </>
 }
@@ -124,24 +125,26 @@ export default function WelcomeScreen() {
     };
 
     return (
-        <div className="welcome-screen">
-            <h1>Welcome</h1>
-            <AddProfileWrapper
-                isAddingProfile={isAddingProfile}
-                setIsAddingProfile={setIsAddingProfile}
-            >
-                <NewUserComponent onLogin={handleLogin} />
-            </AddProfileWrapper>
-            { selectedUsername ? (
-                <PasswordInputComponent
-                    selectedUsername={selectedUsername}
-                    onLogin={handleLogin}
-                    onBack={setSelectedUsername}
-                    password={password}
-                    onSetPassword={setPassword} />
-            ) : (
-                <UserSelectionComponent usernames={usernames} onLogin={handleLogin} />
-            )}
+        <div className="welcome-root">
+            <div className="welcome-screen">
+                <h1>Welcome</h1>
+                <AddProfileWrapper
+                    isAddingProfile={isAddingProfile}
+                    setIsAddingProfile={setIsAddingProfile}
+                >
+                    <NewUserComponent onLogin={handleLogin} />
+                </AddProfileWrapper>
+                { selectedUsername === null ? (
+                    <UserSelectionComponent usernames={usernames} onLogin={handleLogin} />
+                ) : (
+                    <PasswordInputComponent
+                        selectedUsername={selectedUsername}
+                        onLogin={handleLogin}
+                        onBack={setSelectedUsername}
+                        password={password}
+                        onSetPassword={setPassword} />
+                )}
+            </div>
         </div>
     )
 }

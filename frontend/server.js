@@ -17,6 +17,41 @@ const app = express();
 const PORT = process.env.FRONTEND_PORT || 2222;
 const BACKEND_PORT = process.env.BACKEND_PORT || 8090;
 const backendTarget = `http://localhost:${BACKEND_PORT}`;
+const STATUS_CODES = {
+    SUCCESS: 200,
+    BAD_REQUEST: 400,
+    UNAUTHORIZED: 401,
+    SERVER_ERROR: 500,
+};
+async function dropSessionCookie(req, res) {
+    try {
+        const backendRes = await fetch(backendTarget + "/users/logout", {
+            method: "POST",
+            headers: { 'cookie': req.headers.cookie || '' }
+        });
+        translateHeaders(backendRes.headers, res);
+        const resText = await backendRes.text();
+        res.status(backendRes.status).send(resText);
+    }
+    catch (e) {
+        logger.error(`Logout proxy error: ${e}`);
+        res.sendStatus(STATUS_CODES.SERVER_ERROR);
+    }
+}
+function translateHeaders(headers, response) {
+    const doNotForwardHeaderKeys = [
+        'content-length',
+        'transfer-encoding',
+        'content-encoding',
+        'connection',
+        'keep-alive'
+    ];
+    headers.forEach((value, key) => {
+        if (doNotForwardHeaderKeys.includes(key.toLowerCase()))
+            return;
+        response.setHeader(key, value);
+    });
+}
 app.use((req, res, next) => {
     logger.info(`Request: ${req.method} ${req.url}`);
     next();
@@ -27,13 +62,13 @@ app.get("/api/list-users", async (req, res) => {
 app.post("/api/login", express.json(), async (req, res) => {
     const { username, password } = req.body;
     if (typeof username !== "string") {
-        return res.status(400).json({
+        return res.status(STATUS_CODES.BAD_REQUEST).json({
             error: "Username not provided (or invalid)"
         });
     }
     const passwordToUse = password || usersVault.get(username);
     if (!passwordToUse) {
-        return res.status(401).json({
+        return res.status(STATUS_CODES.BAD_REQUEST).json({
             error: "Password required"
         });
     }
@@ -47,35 +82,38 @@ app.post("/api/login", express.json(), async (req, res) => {
                 username,
                 password: passwordToUse
             }),
-            credentials: "include",
             signal: req.signal
         });
         if (backendRes.ok) {
             if (password)
                 usersVault.set(username, password);
         }
-        else if (backendRes.status === 401 && !password) {
+        else if (backendRes.status === STATUS_CODES.UNAUTHORIZED && !password) {
             usersVault.delete(username);
         }
-        const doNotForwardHeaderKeys = [
-            'content-length',
-            'transfer-encoding',
-            'content-encoding',
-            'connection',
-            'keep-alive'
-        ];
-        backendRes.headers.forEach((value, key) => {
-            if (doNotForwardHeaderKeys.includes(key.toLowerCase()))
-                return;
-            res.setHeader(key, value);
-        });
+        translateHeaders(backendRes.headers, res);
         const responseBody = await backendRes.text();
         res.status(backendRes.status).send(responseBody);
     }
     catch (e) {
         logger.error(`Login proxy error: ${e}`);
-        res.status(500).send();
+        res.status(STATUS_CODES.SERVER_ERROR).send();
     }
+});
+app.post("/api/end-session", express.json(), async (req, res) => {
+    dropSessionCookie(req, res);
+});
+app.post("/api/logout", express.json(), async (req, res) => {
+    const { username } = req.body;
+    if (typeof username !== "string") {
+        return res.status(STATUS_CODES.BAD_REQUEST).json({
+            error: "Username invalid"
+        });
+    }
+    if (username) {
+        usersVault.delete(username);
+    }
+    dropSessionCookie(req, res);
 });
 app.use("/api", createProxyMiddleware({
     target: backendTarget,

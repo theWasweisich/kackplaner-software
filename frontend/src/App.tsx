@@ -6,19 +6,19 @@ import Kackkalender from "./Kackkalender.tsx";
 import './App.css';
 import {type ReactNode, useEffect} from "react";
 import {BrowserRouter, Route, Routes, useNavigate, useNavigation} from "react-router-dom";
-import { unauthorizedEventType, type UnauthorizedEventData } from './api/api.ts';
+import { sessionResetEventType } from './api/api.ts';
 import WelcomeScreen from "./WelcomeScreen.tsx";
 
 function GlobalAuthHandler({ children }: { children: ReactNode }) {
     const navigate = useNavigate();
 
     useEffect(() => {
-        const handleUnauthorizedEvent = () => {
+        const handleSessionResetEvent = () => {
             navigate('/', { replace: true });
         }
 
-        window.addEventListener(unauthorizedEventType, handleUnauthorizedEvent);
-        return () => window.removeEventListener(unauthorizedEventType, handleUnauthorizedEvent);
+        window.addEventListener(sessionResetEventType, handleSessionResetEvent);
+        return () => window.removeEventListener(sessionResetEventType, handleSessionResetEvent);
     }, [navigate])
 
     return <>{ children }</>
