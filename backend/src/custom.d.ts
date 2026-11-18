@@ -4,7 +4,8 @@ import 'express-session';
 declare global {
     declare namespace Express {
         export interface Request {
-            logger?: Logger
+            logger?: Logger,
+            userId?: number
         }
     }
 }

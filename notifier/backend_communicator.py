@@ -25,7 +25,6 @@ class BackendCommunication:
             raise InvalidConfiguration("Backend Port not found")
         self.BASE_URL = self.NETLOC_BASE + self.NETLOC_PORT
 
-    def get_last_event(self):
 
 
 backend = BackendCommunication()

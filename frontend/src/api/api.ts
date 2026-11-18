@@ -44,7 +44,7 @@ class SessionResetEvent extends Event {
 }
 export type SessionResetReason = "unauthorized" | "logout";
 
-const baseUrl: string = `/api`;
+const baseUrl: string = `/api/frontend`;
 
 async function handle401Error(res: Response) {
   const text = await res.text();
@@ -198,7 +198,7 @@ export async function deleteEvent(event: NetworkEvent): Promise<boolean> {
 
 export async function shutdownKiosk(): Promise<boolean> {
   try {
-    const res = await fetch(baseUrl + "/shutdown", {
+    const res = await fetch(baseUrl + "/system/shutdown", {
       method: 'POST'
     });
     if (res.ok) return true;
@@ -212,7 +212,7 @@ export async function shutdownKiosk(): Promise<boolean> {
 
 export async function rebootKiosk(): Promise<boolean> {
   try {
-    const res = await fetch(baseUrl + "/reboot", {
+    const res = await fetch(baseUrl + "/system/reboot", {
       method: 'POST'
     });
     if (res.ok) return true;
@@ -226,7 +226,7 @@ export async function rebootKiosk(): Promise<boolean> {
 
 export async function setScreenBrightness(brightness: number): Promise<boolean> {
   try {
-    const res = await fetch(baseUrl + `/display/brightness?brightness=${brightness}`, {
+    const res = await fetch(baseUrl + `/system/display/brightness?brightness=${brightness}`, {
       method: 'POST'
     });
     if (res.ok) return true;

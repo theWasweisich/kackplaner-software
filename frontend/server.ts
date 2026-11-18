@@ -145,9 +145,9 @@ app.post("/api/logout", express.json(), async (req, res)=>  {
 app.use("/api", createProxyMiddleware({
     target: backendTarget,
     changeOrigin: true,
-    pathRewrite: {
-        '^/api': '',
-    },
+    // pathRewrite: {
+    //     '^/api': '',
+    // },
     on: {
         error: (err, req, res) => {
             logger.error("Proxy error:", err);

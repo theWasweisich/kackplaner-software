@@ -11,7 +11,7 @@ export const events = sqliteTable("events", {
 
 export const apiClients = sqliteTable("api_clients", {
 	clientId: text("client_id").primaryKey(),
-	clientSecret: blob("client_secret").notNull(),
+	token: blob("token").notNull(),
 	description: text(),
 	createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 });

@@ -7,7 +7,7 @@ import type {Logger} from "winston";
 import type {SQLiteDelete, SQLiteSelect} from "drizzle-orm/sqlite-core/index";
 
 function userIdMiddlewareGuard(req: Request, res: Response, next: NextFunction) {
-    const userId = req.session.userId;
+    const userId = req.userId;
     if (!userId) {
         if (req.logger) req.logger.warn(`Kackevent Router routing without userId!`)
         return res.sendStatus(401);
@@ -223,7 +223,7 @@ kackEventRouter.get("/", async (req: Request, res: Response) => {
     const logger = req.logger!;
     const startStr = req.query.start;
     const endStr = req.query.end;
-    const userId = req.session.userId;
+    const userId = req.userId;
 
     let cleanStart: string | undefined;
     let cleanEnd: string | undefined;
@@ -250,7 +250,7 @@ kackEventRouter.get("/", async (req: Request, res: Response) => {
 kackEventRouter.post("/", async (req: Request, res: Response) => {
     const logger = req.logger!;
     const postBody = req.body as KackeventPostBody;
-    const userId = req.session.userId;
+    const userId = req.userId;
 
     if (!userId) {
         logger.error("Missing userId!");
@@ -308,7 +308,7 @@ kackEventRouter.post("/", async (req: Request, res: Response) => {
 
 kackEventRouter.get("/latest", async (req: Request, res: Response) => {
     const logger = req.logger!;
-    const userId = req.session.userId;
+    const userId = req.userId;
 
     if (!userId) {
         logger.warn("Missing user id");
@@ -329,7 +329,7 @@ kackEventRouter.get("/latest", async (req: Request, res: Response) => {
 kackEventRouter.get("/latest/:field", async (req: Request, res: Response) => {
     const logger = req.logger!;
     const requestedField = req.params.field
-    const userId = req.session.userId;
+    const userId = req.userId;
 
     if (!userId) {
         logger.warn("User id not provided");
@@ -352,7 +352,7 @@ kackEventRouter.get("/latest/:field", async (req: Request, res: Response) => {
 
 kackEventRouter.get("/dump", async (req: Request, res: Response) => {
     const logger = req.logger!;
-    const userId = req.session.userId;
+    const userId = req.userId;
     const dbRes = await getEvents(logger, userId);
     if (dbRes === undefined) return res.sendStatus(204);
     return res.json({
@@ -364,7 +364,7 @@ kackEventRouter.delete("/", async (req: Request, res: Response) => {
     const dateQuery = req.query.date;
 
     const dateStr = typeof dateQuery === 'string' ? dateQuery : "";
-    const userId = req.session.userId;
+    const userId = req.userId;
 
     if (!isValidDateString(dateStr)) {
         return res.status(400).json({ error: "Invalid date format", date: dateQuery });

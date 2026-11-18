@@ -13,6 +13,9 @@ import { logger } from "./logging.ts";
 import client from 'prom-client';
 import 'dotenv/config';
 import type {Logger} from "winston";
+import {globalRouter} from "./routers/globalRouter.ts";
+import {requireSession} from "./middlewares/session-cookie.ts";
+import {requireApiToken} from "./middlewares/auth-token.ts";
 
 const httpRequestDuration = new client.Histogram({
     name: "http_request_duration_seconds",
@@ -31,19 +34,6 @@ function startMonitoring(req: Request, res: Response, next: NextFunction) {
 
 const BACKEND_PORT = process.env.BACKEND_PORT || "8090";
 const FRONTEND_PORT = process.env.FRONTEND_PORT || "2222";
-
-const BACKLIGHT_BASE = '/sys/class/backlight/';
-let brightnessFile: string | null = null;
-
-try {
-    const folders = fs.readdirSync(BACKLIGHT_BASE);
-    if (folders.length > 0) {
-        brightnessFile = path.join(BACKLIGHT_BASE, folders[0], 'brightness');
-        logger.info(`[Display] Bound to backlight file: ${brightnessFile}`);
-    }
-} catch (e) {
-    logger.error("Could not find brightness file!");
-}
 
 const redisClient = createClient();
 redisClient.connect().catch(logger.error);
@@ -64,6 +54,8 @@ app.use(session({
         httpOnly: true,
     }
 }));
+
+
 app.use(startMonitoring);
 app.use(express.json());
 app.use((req: Request, res: Response, next: NextFunction) => {
@@ -99,72 +91,8 @@ app.get("/metrics", async (req, res) => {
     res.end(await client.register.metrics());
 })
 
-app.post('/shutdown', (req: Request, res: Response) => {
-    const logger = req.logger!;
-    logger.info("Shutdown requested via API endpoint");
-    res.status(200).json({ message: "Shutting down..." });
-
-    setTimeout(() => {
-        exec('sudo /bin/systemctl poweroff', (error) => {
-            if (error) {
-                logger.error(`Shutdown failed: ${error.message}`);
-            }
-        })
-    }, 1000);
-})
-
-app.post("/reboot", (req: Request, res: Response) => {
-    const logger = req.logger!;
-
-    res.status(200).json({ message: "Rebooting..." });
-    setTimeout(() => {
-        exec('sudo systemctl reboot', (error) => {
-            if (error) {
-                logger.error("Reboot failed:", error);
-            }
-        });
-    }, 1000)
-})
-
-function setScreenBrightness(logger: Logger, brightness: number): boolean {
-    if (typeof brightness !== "number") return false;
-    if (brightness > 255 || brightness < 0) { return false; }
-    if (!brightnessFile) {
-        logger.error("No brightness file found.");
-        return false;
-    }
-
-    try {
-        fs.writeFileSync(brightnessFile, brightness.toString(), 'utf-8');
-        return true;
-    } catch (err) {
-        logger.error(`Error setting screen brightness:`, err);
-        return false;
-    }
-}
-
-app.post("/display/brightness", (req, res) => {
-    const logger = req.logger!;
-    const queryBrightness = req.query.brightness;
-    if (typeof queryBrightness !== "string") {
-        return res.sendStatus(400);
-    }
-    const numberBrightness = parseInt(queryBrightness);
-
-    if (Number.isNaN(numberBrightness)) {
-        return res.sendStatus(400);
-    }
-
-    const success = setScreenBrightness(logger, numberBrightness);
-    if (success) {
-        return res.sendStatus(200);
-    } else {
-        return res.sendStatus(503);
-    }
-});
-
-app.use("/kackevent", kackEventRouter);
-app.use("/users", usersRouter);
+app.use("/api/frontend", requireSession, globalRouter);
+app.use("/api/internal", requireApiToken, globalRouter);
 
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
     if (req.logger) {
