@@ -15,16 +15,104 @@ export interface CalendarEvent {
   color?: string;
 }
 
+export const unauthorizedEventType = "unauthorized-request";
+
+export interface UnauthorizedEventData {
+  url?: string;
+  text?: string;
+}
 
 const baseUrl: string = `/api`;
+
+async function handle401Error(res: Response) {
+  const text = await res.text();
+
+  const eventData: CustomEventInit<UnauthorizedEventData> = {
+    detail: {
+      text: text,
+      url: res.url
+    }
+  };
+
+  window.dispatchEvent(new CustomEvent(unauthorizedEventType, eventData));
+}
+
+async function handleRequestError(res: Response) {
+  console.log(`Server error: ${res.status} (${res.statusText})`)
+
+  if (res.status === 401) {
+    await handle401Error(res);
+  }
+
+  return false;
+}
+
+export async function logut(username: string) {
+  try {
+    const res = await fetch(baseUrl + "/logout", {
+      method: "POST",
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username })
+    });
+
+    if (res.ok) {
+      await handle401Error(res);
+    }
+  } catch (e) {
+    console.error("Failed to log out:", e);
+  }
+  return false;
+}
+
+export async function login(username: string, password: string): Promise<boolean> {
+  try {
+    const res: Response = await fetch(baseUrl + "/users/login", {
+      method: "POST",
+      credentials: "include",
+      body: JSON.stringify({
+        username: username,
+        password: password
+      }),
+      headers: {
+        "Content-Type": "application/json"
+      }
+    });
+    if (!res.ok) {
+      return await handleRequestError(res);
+    }
+    return true;
+  } catch (e) {
+    console.error(`Failed to perform login: ${e}`);
+  }
+
+  return false;
+}
+
+export async function getMe(): Promise<string | undefined> {
+  try {
+    const res: Response = await fetch(baseUrl + "/users/me", {
+      credentials: "include",
+      method: "GET"
+    });
+    if (!res.ok) {
+      if (res.status === 401) await handleRequestError(res);
+      return;
+    }
+    return await res.text();
+  } catch (e) {
+    console.error(`Failed to get me: ${e}`)
+  }
+  return;
+}
 
 export async function fetchEvents(start: Date, end: Date): Promise<NetworkEvent[]> {
   let events: NetworkEvent[] = [];
   try {
-    console.log(`[API] Fetching events from: /get?start=${start.toISOString()}&end=${end.toISOString()}`);
-    const res: Response = await fetch(baseUrl + `/kackevent?start=${start.toISOString()}&end=${end.toISOString()}`);
+    const urlPath = `/kackevent?start=${start.toISOString()}&end=${end.toISOString()}`;
+    console.log(`[API] Fetching events from: ${urlPath}`);
+    const res: Response = await fetch(baseUrl + urlPath);
     if (!res.ok) {
-      console.error(`Server error: ${res.status} (${res.statusText})`);
+      if (res.status === 401) await handleRequestError(res);
       return events;
     }
     const data: { events: NetworkEvent[] } = await res.json();
@@ -37,14 +125,15 @@ export async function fetchEvents(start: Date, end: Date): Promise<NetworkEvent[
 
 export async function createEvents(events: NetworkEvent[]): Promise<NetworkEvent[]> {
   try {
-    console.log("[API] Sending buffered creations to /create:", events);
-    const res = await fetch(baseUrl + "/kackevent", {
+    const urlPath = "/kackevent"
+    console.log(`[API] Sending buffered creations to ${urlPath}:`, events);
+    const res = await fetch(baseUrl + urlPath, {
       method: "POST",
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ events }),
     });
     if (!res.ok) {
-      console.error(`Server error: ${res.status} (${res.statusText})`);
+      if (res.status === 401) await handleRequestError(res);
       return [];
     }
     const data: { events: CalendarEvent[] } = await res.json();
@@ -62,7 +151,8 @@ export async function deleteEvent(event: NetworkEvent): Promise<boolean> {
       method: "DELETE"
     });
     if (!res.ok) {
-      console.error(`Server error: ${res.status} (${res.statusText})`);
+      if (res.status === 401) return await handleRequestError(res);
+      return false;
     }
   } catch (e) {
     console.error("[API] Failed to delete events from backend", e);
@@ -78,6 +168,8 @@ export async function shutdownKiosk(): Promise<boolean> {
       method: 'POST'
     });
     if (res.ok) return true;
+    if (res.status !== 401) return false;
+    return await handleRequestError(res);
   } catch (e) {
     console.error(`Failed to reach backend for shutdown:`, e)
   }
@@ -90,6 +182,8 @@ export async function rebootKiosk(): Promise<boolean> {
       method: 'POST'
     });
     if (res.ok) return true;
+    if (res.status !== 401) return false;
+    return await handleRequestError(res);
   } catch (e) {
     console.error(`Failed to reach backend for reboot:`, e)
   }
@@ -102,6 +196,8 @@ export async function setScreenBrightness(brightness: number): Promise<boolean> 
       method: 'POST'
     });
     if (res.ok) return true;
+    if (res.status !== 401) return false;
+    return await handleRequestError(res);
   } catch (e) {
     console.error("Failed to reach backend for setting brightness:", e);
   }

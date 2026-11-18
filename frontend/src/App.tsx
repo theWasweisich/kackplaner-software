@@ -3,13 +3,38 @@ import '@fullcalendar/react/themes/forma/theme.css'
 import '@fullcalendar/react/themes/forma/palettes/blue.css'
 import {ConfirmProvider} from "./MicrolaxConfirmProvider.tsx";
 import Kackkalender from "./Kackkalender.tsx";
+import './App.css';
+import {type ReactNode, useEffect} from "react";
+import {BrowserRouter, Route, Routes, useNavigate, useNavigation} from "react-router-dom";
+import { unauthorizedEventType, type UnauthorizedEventData } from './api/api.ts';
+import WelcomeScreen from "./WelcomeScreen.tsx";
+
+function GlobalAuthHandler({ children }: { children: ReactNode }) {
+    const navigate = useNavigate();
+
+    useEffect(() => {
+        const handleUnauthorizedEvent = () => {
+            navigate('/', { replace: true });
+        }
+
+        window.addEventListener(unauthorizedEventType, handleUnauthorizedEvent);
+        return () => window.removeEventListener(unauthorizedEventType, handleUnauthorizedEvent);
+    }, [navigate])
+
+    return <>{ children }</>
+}
 
 export default function App() {
-  return (
-      <div>
-        <ConfirmProvider>
-          <Kackkalender />
-        </ConfirmProvider>
-      </div>
-  )
+    return (
+        <BrowserRouter>
+            <GlobalAuthHandler>
+                <ConfirmProvider>
+                    <Routes>
+                        <Route path="/" element={<WelcomeScreen />} />
+                        <Route path="/calendar" element={<Kackkalender />} />
+                    </Routes>
+                </ConfirmProvider>
+            </GlobalAuthHandler>
+        </BrowserRouter>
+)
 }

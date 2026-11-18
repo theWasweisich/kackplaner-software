@@ -14,7 +14,9 @@ const usersRouter = express.Router();
 type NewUser = typeof usersTable.$inferInsert;
 type SelectedUser = typeof usersTable.$inferSelect;
 
-const jsonParser = bodyParser.json();
+const jsonParser = bodyParser.json({
+
+});
 
 async function insertUser(user: NewUser) {
     return await db
@@ -81,14 +83,21 @@ usersRouter.post("/register", jsonParser, async (req: Request, res: Response) =>
     return res.sendStatus(500);
 });
 
-usersRouter.post("/login", async (req: Request, res: Response, next: NextFunction) => {
-    if (!req.body || !req.body.username || !req.body.password) return res.sendStatus(400);
+usersRouter.post("/login", jsonParser, async (req: Request, res: Response, next: NextFunction) => {
     const logger = req.logger!;
+    if (!req.body) {
+        logger.warn(`Request body: ${req.body}`);
+        return res.status(400).send("No body provided");
+    } else if (!req.body.username) {
+        return res.status(400).send("No username provided");
+    } else if (!req.body.password) {
+        return res.status(400).send("No password provided");
+    }
     const username = req.body.username;
     const password = req.body.password;
 
-    if (typeof username !== "string") return res.sendStatus(400);
-    if (typeof password !== "string") return res.sendStatus(400);
+    if (typeof username !== "string") return res.status(400).send("Username malformed");
+    if (typeof password !== "string") return res.status(400).send("Password malformed");
 
     const user = await userLogin(username, password, logger, req.signal);
 

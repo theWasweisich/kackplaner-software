@@ -30,7 +30,7 @@ function startMonitoring(req: Request, res: Response, next: NextFunction) {
 }
 
 const BACKEND_PORT = process.env.BACKEND_PORT || "8090";
-const FRONTEND_PORT = process.env.FRONTEND_PORT || "5173";
+const FRONTEND_PORT = process.env.FRONTEND_PORT || "2222";
 
 const BACKLIGHT_BASE = '/sys/class/backlight/';
 let brightnessFile: string | null = null;

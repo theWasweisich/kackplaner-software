@@ -1,11 +1,36 @@
+// to be mounted on /kackevent
 import express, { type Request, type Response, type NextFunction } from "express";
 import db from "../db/database.ts";
-import {and, eq, gte, asc, desc, sql} from "drizzle-orm";
+import {and, eq, gte, asc, desc, sql, SQL} from "drizzle-orm";
 import { events as eventsTable } from '../db/schema.ts';
 import type {Logger} from "winston";
+import type {SQLiteDelete, SQLiteSelect} from "drizzle-orm/sqlite-core/index";
 
-// to be mounted on /kackevent
+function userIdMiddlewareGuard(req: Request, res: Response, next: NextFunction) {
+    const userId = req.session.userId;
+    if (!userId) {
+        if (req.logger) req.logger.warn(`Kackevent Router routing without userId!`)
+        return res.sendStatus(401);
+    }
+    next();
+}
+
 const kackEventRouter = express.Router();
+kackEventRouter.use(userIdMiddlewareGuard);
+
+function withUserFilter<T extends SQLiteSelect>(
+    query: T,
+    userId: number
+) {
+    return query.where(eq(eventsTable.userId, userId));
+}
+
+function deleteWithUserFilter<T extends SQLiteDelete>(
+    queryBuilder: T,
+    userId: number
+) {
+    return queryBuilder.where(eq(eventsTable.userId, userId));
+}
 
 interface NetworkEvent {
     id?: string;
@@ -17,6 +42,10 @@ interface NetworkEvent {
 interface KackeventPostBody {
     events: NetworkEvent[]
 }
+
+type NewEvent = typeof eventsTable.$inferInsert;
+type SelectedEvent = typeof eventsTable.$inferSelect;
+
 function isValidDateString(dateString: string): boolean {
     if (typeof dateString !== "string") return false;
 
@@ -30,8 +59,8 @@ function isValidDateString(dateString: string): boolean {
 
 }
 
-function networkToDbEvents(events: NetworkEvent[]): typeof eventsTable.$inferInsert[] {
-    const dbEvents: typeof eventsTable.$inferInsert[] = [];
+function networkToDbEvents(events: NetworkEvent[]): NewEvent[] {
+    const dbEvents: NewEvent[] = [];
 
     for (const event of events) {
         let eventId: number | undefined = parseInt(event.id ? event.id : "");
@@ -48,7 +77,7 @@ function networkToDbEvents(events: NetworkEvent[]): typeof eventsTable.$inferIns
     return dbEvents;
 }
 
-function dbEventsToNetwork(events: typeof eventsTable.$inferSelect[]): NetworkEvent[] {
+function dbEventsToNetwork(events: SelectedEvent[]): NetworkEvent[] {
     const networkEvents: NetworkEvent[] = [];
 
     for (const event of events) {
@@ -63,9 +92,11 @@ function dbEventsToNetwork(events: typeof eventsTable.$inferSelect[]): NetworkEv
     return networkEvents;
 }
 
-async function insertEvents(events: NetworkEvent[]) {
+async function insertEvents(events: NetworkEvent[], userId: number) {
     if (events.length === 0) return false;
-    const dbEvents: typeof eventsTable.$inferInsert[] = networkToDbEvents(events);
+    const dbEvents: NewEvent[] = networkToDbEvents(events);
+
+    dbEvents.forEach(event => event.userId = userId);
 
     const res = await db.insert(eventsTable).values(dbEvents).returning();
 
@@ -98,7 +129,7 @@ function getOrderByDateSQL() {
     return sql`unixepoch(${eventsTable.start})`;
 }
 
-async function getEvents(logger: Logger, fromStr?: string, toStr?: string): Promise<NetworkEvent[] | undefined> {
+async function getEvents(logger: Logger, userId?: number, fromStr?: string, toStr?: string): Promise<NetworkEvent[] | undefined> {
     const filters: SQL[] = [];
     if (fromStr) filters.push(sql`unixepoch(${eventsTable.start}) > unixepoch(${fromStr})`);
     if (toStr) filters.push(sql`unixepoch(${eventsTable.start}) < unixepoch(${toStr})`);
@@ -108,19 +139,21 @@ async function getEvents(logger: Logger, fromStr?: string, toStr?: string): Prom
         to: toStr
     });
 
+    const query = db
+        .select()
+        .from(eventsTable)
+        .where(and(...filters))
+        .orderBy(
+            asc(getOrderByDateSQL())
+        );
+
     return dbEventsToNetwork(
-        await db
-            .select()
-            .from(eventsTable)
-            .where(and(...filters))
-            .orderBy(
-                asc(getOrderByDateSQL())
-            )
+        await (userId ? withUserFilter(query.$dynamic(), userId) : query)
     );
 }
 
-async function getLatestEventDate(): Promise<string | undefined> {
-    const dbRes = await db
+async function getLatestEventDate(logger: Logger, userId?: number): Promise<string | undefined> {
+    const query = db
         .select({
             date: eventsTable.start
         })
@@ -128,9 +161,12 @@ async function getLatestEventDate(): Promise<string | undefined> {
         .orderBy(desc(getOrderByDateSQL()))
         .limit(1);
 
+    const dbRes = await (userId ? withUserFilter(query.$dynamic(), userId) : query);
+
     if (dbRes.length !== 1) {
         return;
     }
+    const latestEvent = dbRes[0];
     const date = dbRes[0].date ?? undefined;
 
     if (date) {
@@ -147,7 +183,7 @@ function cleanDateStringInput(input: string): string {
     return input;
 }
 
-async function getLastEvent(logger: Logger) {
+async function getLastEvent(logger: Logger, userId: number) {
 
     logger.info("Fetching latest event");
     const query = db
@@ -157,7 +193,7 @@ async function getLastEvent(logger: Logger) {
         .limit(1);
     query.where(gte(sql`timediff('now', ${eventsTable.start})`, 0));
 
-    const dbRes = await query;
+    const dbRes = await withUserFilter(query.$dynamic(), userId);
 
     if (dbRes.length === 0) {
 
@@ -172,7 +208,6 @@ async function getLastEvent(logger: Logger) {
 
 }
 async function doesDateExist(dateStr: string) {
-
     const dbRes = await db
         .select({id: eventsTable.id})
         .from(eventsTable)
@@ -188,6 +223,7 @@ kackEventRouter.get("/", async (req: Request, res: Response) => {
     const logger = req.logger!;
     const startStr = req.query.start;
     const endStr = req.query.end;
+    const userId = req.session.userId;
 
     let cleanStart: string | undefined;
     let cleanEnd: string | undefined;
@@ -198,7 +234,7 @@ kackEventRouter.get("/", async (req: Request, res: Response) => {
     if ((cleanStart && !isValidDateString(cleanStart)) || (cleanEnd && !isValidDateString(cleanEnd)))
         return res.status(400).json({ error: "Invalid date format", start: startStr, end: endStr});
 
-    const dbRes = await getEvents(logger, cleanStart, cleanEnd) ?? [];
+    const dbRes = await getEvents(logger, userId, cleanStart, cleanEnd) ?? [];
 
     if (dbRes.length === 0) {
         logger.warn(`No events found between ${startStr} and ${endStr}`);
@@ -214,6 +250,12 @@ kackEventRouter.get("/", async (req: Request, res: Response) => {
 kackEventRouter.post("/", async (req: Request, res: Response) => {
     const logger = req.logger!;
     const postBody = req.body as KackeventPostBody;
+    const userId = req.session.userId;
+
+    if (!userId) {
+        logger.error("Missing userId!");
+        return res.sendStatus(401);
+    }
 
     if (!("events" in postBody)) {
         return res.status(401).json({
@@ -249,7 +291,7 @@ kackEventRouter.post("/", async (req: Request, res: Response) => {
         })
     }
 
-    const success = await insertEvents(eventsToBeInserted);
+    const success = await insertEvents(eventsToBeInserted, userId);
 
     if (success) {
         return res.status(201).json({
@@ -266,7 +308,14 @@ kackEventRouter.post("/", async (req: Request, res: Response) => {
 
 kackEventRouter.get("/latest", async (req: Request, res: Response) => {
     const logger = req.logger!;
-    const lastEvent = await getLastEvent(logger);
+    const userId = req.session.userId;
+
+    if (!userId) {
+        logger.warn("Missing user id");
+        return res.sendStatus(401);
+    }
+
+    const lastEvent = await getLastEvent(logger, userId);
 
     if (!lastEvent) {
         return res.sendStatus(204);
@@ -277,17 +326,34 @@ kackEventRouter.get("/latest", async (req: Request, res: Response) => {
     });
 })
 
-kackEventRouter.get("/latest/:field", (req: Request, res: Response) => {
+kackEventRouter.get("/latest/:field", async (req: Request, res: Response) => {
+    const logger = req.logger!;
     const requestedField = req.params.field
+    const userId = req.session.userId;
+
+    if (!userId) {
+        logger.warn("User id not provided");
+        return res.sendStatus(401);
+    }
 
     if (typeof requestedField !== "string") {
         return res.sendStatus(501);
     }
+
+    if (requestedField === "date") {
+        const latestDate = await getLatestEventDate(logger, userId);
+        return res.json({
+            "latestDate": latestDate
+        });
+    }
+
+    return res.sendStatus(501);
 })
 
 kackEventRouter.get("/dump", async (req: Request, res: Response) => {
     const logger = req.logger!;
-    const dbRes = await getEvents(logger);
+    const userId = req.session.userId;
+    const dbRes = await getEvents(logger, userId);
     if (dbRes === undefined) return res.sendStatus(204);
     return res.json({
         'events': dbRes
@@ -298,9 +364,14 @@ kackEventRouter.delete("/", async (req: Request, res: Response) => {
     const dateQuery = req.query.date;
 
     const dateStr = typeof dateQuery === 'string' ? dateQuery : "";
+    const userId = req.session.userId;
 
     if (!isValidDateString(dateStr)) {
         return res.status(400).json({ error: "Invalid date format", date: dateQuery });
+    }
+
+    if (!userId) {
+        return res.sendStatus(401);
     }
 
     const dateExists: boolean = await doesDateExist(dateStr);
@@ -310,7 +381,9 @@ kackEventRouter.delete("/", async (req: Request, res: Response) => {
         return;
     }
 
-    const dbRes = await db.delete(eventsTable).where(eq(sql`unixepoch(${eventsTable.start})`, sql`unixepoch(${dateStr})`));
+    const deleteQuery = db.delete(eventsTable).where(eq(sql`unixepoch(${eventsTable.start})`, sql`unixepoch(${dateStr})`));
+
+    const dbRes = await deleteWithUserFilter(deleteQuery.$dynamic(), userId);
 
     if (dbRes.rowsAffected == 1) {
         res.status(200).send();

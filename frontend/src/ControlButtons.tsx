@@ -72,7 +72,7 @@ export default function ControlButtons({ onBeforeShutdown }: ControlButtonsProps
                 <button className="sleep-screen-button" onClick={sleepScreen}>Sleep</button>
                 <button className="reload-button" onClick={reloadPage}>Reload Page</button>
 
-                <button className="brightness-dim-button" onClick={() => triggerSetBrightness(25)} >Dim</button>
+                <button className="brightness-dim-button right" onClick={() => triggerSetBrightness(25)} >Dim</button>
                 <button className="brightness-bright-button" onClick={() => triggerSetBrightness(255)} >Bright</button>
             </div>
 
